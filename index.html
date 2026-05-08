@@ -7,6 +7,53 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="LexManager">
 <title>LexManager</title>
+<script>
+/* ════ パスワード保護 ════
+   ★ 以下の PASSWORD を任意の文字列に変更してください ★
+   変更後、GitHubにアップロードし直してください
+*/
+const PASSWORD = '1192';
+
+(function(){
+  // セッション中は再入力不要（ブラウザを閉じるとリセット）
+  if(sessionStorage.getItem('lm_auth')==='ok') return;
+  document.addEventListener('DOMContentLoaded', function(){
+    // パスワード画面を表示
+    document.body.style.display='none';
+    const screen = document.createElement('div');
+    screen.id = 'pwScreen';
+    screen.style.cssText='position:fixed;inset:0;background:#0F1F3D;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;padding:40px;z-index:9999';
+    screen.innerHTML=`
+      <div style="font-size:52px">⚖</div>
+      <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:.04em">LexManager</div>
+      <div style="color:rgba(255,255,255,0.5);font-size:13px">パスワードを入力してください</div>
+      <input id="pwInput" type="password" placeholder="パスワード"
+        style="width:100%;max-width:300px;padding:14px 16px;border-radius:12px;border:none;font-size:17px;text-align:center;outline:none;background:rgba(255,255,255,0.12);color:#fff;caret-color:#fff"
+        onkeydown="if(event.key==='Enter')checkPw()">
+      <button onclick="checkPw()"
+        style="width:100%;max-width:300px;padding:14px;border-radius:12px;border:none;background:#C9A84C;color:#0F1F3D;font-size:17px;font-weight:700;cursor:pointer">
+        ログイン
+      </button>
+      <div id="pwErr" style="color:#f08080;font-size:13px;min-height:18px"></div>`;
+    document.body.parentNode.insertBefore(screen, document.body);
+    setTimeout(()=>document.getElementById('pwInput')?.focus(), 100);
+  });
+})();
+
+function checkPw(){
+  const input = document.getElementById('pwInput')?.value||'';
+  if(input === PASSWORD){
+    sessionStorage.setItem('lm_auth','ok');
+    document.getElementById('pwScreen')?.remove();
+    document.body.style.display='';
+  } else {
+    const err = document.getElementById('pwErr');
+    if(err) err.textContent='パスワードが違います';
+    const inp = document.getElementById('pwInput');
+    if(inp){ inp.value=''; inp.focus(); }
+  }
+}
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 :root{
