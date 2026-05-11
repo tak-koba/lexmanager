@@ -371,6 +371,7 @@ function fmtDT(d){ if(!d)return'—'; return d.length>10?d.replace('T',' '):d.re
 function esc(s){ return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function val(id){ const e=document.getElementById(id); return e?e.value.trim():''; }
 function setVal(id,v){ const e=document.getElementById(id); if(e)e.value=v||''; }
+function clientKana(c){if(!c)return'';return c.type==='corporate'?(c.companyName||''):(c.lastNameKana||'')+(c.firstNameKana||'')+(c.lastName||'')+(c.firstName||'');}
 function clientName(c){
   if(!c)return'—';
   return c.type==='corporate'?(c.companyName||''):((c.lastName||'')+(c.firstName||'')||'（未設定）');
@@ -549,6 +550,7 @@ function renderClients(el){
   el.innerHTML=`
   <div class="search-wrap"><div class="search-inner">🔍<input type="text" id="clientSearch" placeholder="氏名・会社名・電話番号で検索" oninput="filterClients()"></div></div>
   <div class="segment"><button class="seg-btn active" onclick="setClientSeg('all',this)">すべて</button><button class="seg-btn" onclick="setClientSeg('individual',this)">個人</button><button class="seg-btn" onclick="setClientSeg('corporate',this)">法人</button></div>
+  <div style="padding:4px 16px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" id="clientSort" onchange="filterClients()"><option value="kana">五十音順</option><option value="type">種別順</option><option value="regAt">登録日順</option></select></div>
   <div id="clientList"></div><div style="height:20px"></div>`;
   window._cf='all'; filterClients();
 }
@@ -560,11 +562,15 @@ function setClientSeg(t,btn){
 function filterClients(){
   const q=(document.getElementById('clientSearch')?.value||'').toLowerCase();
   const tf=window._cf||'all';
-  const list=DB.clients.filter(c=>{
+  const sort=document.getElementById('clientSort')?.value||'kana';
+  let list=DB.clients.filter(c=>{
     const nm=(c.type==='corporate'?c.companyName:(c.lastName||'')+(c.firstName||'')).toLowerCase();
     const ph=(c.phones||[]).map(p=>p.number).join('');
     return(!q||nm.includes(q)||ph.includes(q)||(c.email||'').toLowerCase().includes(q))&&(tf==='all'||c.type===tf);
   });
+  if(sort==='kana') list.sort((a,b)=>clientKana(a).localeCompare(clientKana(b),'ja'));
+  else if(sort==='type') list.sort((a,b)=>a.type.localeCompare(b.type));
+  else if(sort==='regAt') list.sort((a,b)=>(b.registeredAt||'').localeCompare(a.registeredAt||''));
   const el=document.getElementById('clientList');if(!el)return;
   if(!list.length){el.innerHTML=`<div class="empty"><div class="empty-icon">👥</div><div>顧客が見つかりません</div></div>`;return;}
   el.innerHTML=`<div class="list-card">${list.map(c=>{
@@ -1171,6 +1177,7 @@ function renderCases(el){
   el.innerHTML=`
   <div class="search-wrap"><div class="search-inner">🔍<input type="text" id="caseSearch" placeholder="案件名・顧客名・裁判所で検索" oninput="filterCases()"></div></div>
   <div class="segment"><button class="seg-btn active" onclick="setCaseSeg('all',this)">すべて</button><button class="seg-btn" onclick="setCaseSeg('client',this)">顧客</button><button class="seg-btn" onclick="setCaseSeg('court',this)">裁判所</button></div>
+  <div style="padding:4px 16px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" id="caseSort" onchange="filterCases()"><option value="createdAt">登録日順</option><option value="type">種別順</option><option value="clientKana">顧客五十音順</option><option value="nextDate">次回期日順</option><option value="todo">ToDo有り順</option></select></div>
   <div id="caseList"></div><div style="height:20px"></div>`;
   window._caseFil='all'; filterCases();
 }
@@ -1182,7 +1189,8 @@ function setCaseSeg(t,btn){
 function filterCases(){
   const q=(document.getElementById('caseSearch')?.value||'').toLowerCase();
   const tf=window._caseFil||'all';
-  const list=DB.cases.filter(c=>{
+  const sort=document.getElementById('caseSort')?.value||'createdAt';
+  let list=DB.cases.filter(c=>{
     const cl=DB.clients.find(x=>x.id===c.clientId);
     return(!q||(c.caseName||'').toLowerCase().includes(q)||clientName(cl).toLowerCase().includes(q)||(c.trialCourt||'').toLowerCase().includes(q))&&(tf==='all'||c.caseType===tf);
   });
@@ -1218,6 +1226,7 @@ function openCaseDetail(id){
     html+=drow('相手方',oppDisp);
     if(c.opponent.hasLawyer==='yes'){
       let lwDisp=esc(c.opponent.lawyerName||'');
+      if(c.opponent.lawyerOffice)lwDisp+=` <span style="font-size:12px;color:var(--text3)">(${esc(c.opponent.lawyerOffice)})</span>`;
       if(c.opponent.lawyerTel)lwDisp+=`<br><a href="tel:${c.opponent.lawyerTel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.lawyerTel)}</a>${cpBtn(c.opponent.lawyerTel)}`;
       if(c.opponent.lawyerFax)lwDisp+=` / FAX: ${esc(c.opponent.lawyerFax)}`;
       if(c.opponent.lawyerEmail)lwDisp+=`<br><a href="mailto:${esc(c.opponent.lawyerEmail)}" style="color:inherit;text-decoration:none">${esc(c.opponent.lawyerEmail)}</a>`;
@@ -1317,6 +1326,7 @@ function openCaseForm(existing=null,clientId=null){
     <div class="form-row"><div class="form-label-col">代理人弁護士</div><div class="form-input-col"><select class="fc" id="cs_hasLawyer" onchange="document.getElementById('cs_lawyerDetail').style.display=this.value==='yes'?'block':'none'"><option value="no">なし</option><option value="yes" ${hl?'selected':''}>あり</option></select></div></div>
     <div id="cs_lawyerDetail" style="display:${hl?'block':'none'}">
       <div class="form-row"><div class="form-label-col">弁護士氏名</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerName" value="${esc(existing?.opponent?.lawyerName||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">事務所名</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerOffice" value="${esc(existing?.opponent?.lawyerOffice||'')}"></div></div>
       <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerTel" value="${esc(existing?.opponent?.lawyerTel||'')}"></div></div>
       <div class="form-row"><div class="form-label-col">FAX番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerFax" value="${esc(existing?.opponent?.lawyerFax||'')}"></div></div>
       <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" id="cs_lawyerEmail" value="${esc(existing?.opponent?.lawyerEmail||'')}"></div></div>
@@ -1382,7 +1392,7 @@ function saveCase(existingId=null){
         zip:val('cs_oppZip'),addr:val('cs_oppAddr'),
         contactName:val('cs_oppContact'),
         hasLawyer:val('cs_hasLawyer'),
-        lawyerName:val('cs_lawyerName'),
+        lawyerName:val('cs_lawyerName'),lawyerOffice:val('cs_lawyerOffice'),
         lawyerTel:normalizePhone(val('cs_lawyerTel')),
         lawyerFax:normalizePhone(val('cs_lawyerFax')),
         lawyerEmail:val('cs_lawyerEmail'),
@@ -1399,9 +1409,13 @@ function saveCase(existingId=null){
 
 /* ════════════ ToDo ════════════ */
 function renderTodos(el){
-  const todos=DB.todos.filter(t=>!t.done).sort((a,b)=>(a.deadline||'9').localeCompare(b.deadline||'9'));
+  const todoSort=window._todoSort||'deadline';
+  let todos=DB.todos.filter(t=>!t.done);
+  if(todoSort==='deadline') todos.sort((a,b)=>(a.deadline||'9').localeCompare(b.deadline||'9'));
+  else if(todoSort==='clientKana'){todos.sort((a,b)=>{const ca=DB.cases.find(x=>x.id===a.caseId);const cb=DB.cases.find(x=>x.id===b.caseId);const cla=ca?DB.clients.find(x=>x.id===ca.clientId):null;const clb=cb?DB.clients.find(x=>x.id===cb.clientId):null;return clientKana(cla||{}).localeCompare(clientKana(clb||{}),'ja');});}
   const done=DB.todos.filter(t=>t.done).slice(0,10);
   el.innerHTML=`
+  <div style="padding:8px 16px 4px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" onchange="window._todoSort=this.value;renderTodos(document.getElementById('mainContent'))"><option value="deadline" ${(window._todoSort||'deadline')==='deadline'?'selected':''}>期限順</option><option value="clientKana" ${window._todoSort==='clientKana'?'selected':''}>顧客五十音順</option></select></div>
   <div class="section-header">未完了（${todos.length}件）</div>
   <div class="list-card">
     ${todos.length?todos.map(t=>{const d=daysUntil(t.deadline);const cls=d===null?'':d<0?'overdue':d<=3?'soon':'ok';return`<div class="todo-item" onclick="openTodoForm(DB.todos.find(x=>x.id==='${t.id}'))"><input type="checkbox" class="todo-check" ${t.done?'checked':''} onchange="event.stopPropagation();toggleTodo('${t.id}')"><div class="todo-info ${t.done?'done':''}"><div class="todo-title">${esc(t.title)}</div><div class="todo-meta">${todoSubLabel(t)}</div>${t.deadline?`<div class="todo-dl ${cls}">${fmtDT(t.deadline)}</div>`:''}</div></div>`;}).join(''):'<div class="empty" style="padding:30px"><div class="empty-icon">✅</div><div>未完了のToDoはありません</div></div>'}
