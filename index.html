@@ -328,6 +328,19 @@ function clearApiKey(){
 /* ─── ユーティリティ ─── */
 function uid(){ return Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function today(){ return new Date().toISOString().slice(0,10); }
+function copyToClip(text){
+  navigator.clipboard.writeText(text).then(()=>{
+    const t=document.createElement('div');
+    t.textContent='✓ コピーしました';
+    t.style.cssText='position:fixed;bottom:40px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#fff;padding:8px 20px;border-radius:20px;font-size:14px;z-index:9999;pointer-events:none';
+    document.body.appendChild(t);setTimeout(()=>t.remove(),1500);
+  }).catch(()=>{
+    const ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();document.execCommand('copy');document.body.removeChild(ta);
+  });
+}
+function cpBtn(text,label=''){
+  return`<button onclick="event.stopPropagation();copyToClip('${text.replace(/\\/g,'\\\\').replace(/'/g,"\\'")}')" style="display:inline-flex;align-items:center;background:var(--bg2);border:none;border-radius:6px;padding:3px 8px;font-size:11px;color:var(--text2);cursor:pointer;margin-left:6px;vertical-align:middle;-webkit-tap-highlight-color:transparent">コピー</button>`;
+}
 function fmtDate(d){ if(!d)return'—'; return d.slice(0,10).replace(/-/g,'/'); }
 function fmtDT(d){ if(!d)return'—'; return d.length>10?d.replace('T',' '):d.replace(/-/g,'/'); }
 function esc(s){ return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -337,7 +350,7 @@ function clientName(c){
   if(!c)return'—';
   return c.type==='corporate'?(c.companyName||''):((c.lastName||'')+(c.firstName||'')||'（未設定）');
 }
-function normalizePhone(s){ return(s||'').replace(/-/g,''); }
+function normalizePhone(s){ return(s||'').replace(/[\s\u3000　-]/g,''); }
 function daysUntil(d){
   if(!d)return null;
   const base=d.length>10?new Date(d):new Date(d+'T00:00:00');
@@ -384,7 +397,7 @@ function updateBadges(){
 }
 function drow(label,value){
   if(!value&&value!==0)return'';
-  return`<div class="detail-row"><div class="detail-label">${label}</div><div class="detail-value">${value}</div></div>`;
+  return`<div class="detail-row"><div class="detail-label">${label}</div><div class="detail-value" style="display:flex;align-items:flex-start;flex-wrap:wrap;gap:4px">${value}</div></div>`;
 }
 
 /* ─── 郵便番号 ─── */
@@ -533,21 +546,21 @@ function openClientDetail(id){
   const linked=DB.cases.filter(cs=>cs.clientId===id);
   let html=`<div class="detail-wrap"><div class="detail-section"><div class="detail-section-title">基本情報</div>`;
   if(c.type==='individual'){
-    html+=drow('氏名',esc((c.lastName||'')+(c.firstName||'')));
-    html+=drow('よみがな',esc((c.lastNameKana||'')+(c.firstNameKana||'')));
+    html+=drow('氏名',`${esc((c.lastName||'')+(c.firstName||''))}${cpBtn((c.lastName||'')+(c.firstName||''))}`);
+    html+=drow('よみがな',`${esc((c.lastNameKana||'')+(c.firstNameKana||''))}${(c.lastNameKana||c.firstNameKana)?cpBtn((c.lastNameKana||'')+(c.firstNameKana||'')):''}`);
     if(c.birthday)html+=drow('生年月日',`${fmtDate(c.birthday)}（${toGengo(c.birthday)}）${calcAge(c.birthday)?' / '+calcAge(c.birthday):''}`);
-    if((c.phones||[]).length)html+=drow('電話番号',c.phones.map(p=>`${esc(p.type)}: ${esc(p.number)}`).join('<br>'));
-    if(c.email)html+=drow('メール',esc(c.email));
-    if(c.mainAddr)html+=drow('住所',`${c.mainZip?'〒'+esc(c.mainZip)+' ':''}${esc(c.mainAddr)} <a href="${gmapUrl(c.mainAddr)}" target="_blank" style="font-size:13px">🗺</a>`);
+    if((c.phones||[]).length)html+=drow('電話番号',c.phones.map(p=>`${esc(p.type)}: <a href="tel:${p.number}" style="color:inherit;text-decoration:none">${esc(p.number)}</a>${cpBtn(p.number)}`).join('<br>'));
+    if(c.email)html+=drow('メール',`<a href="mailto:${esc(c.email)}" style="color:inherit;text-decoration:none">${esc(c.email)}</a>${cpBtn(c.email)}`);
+    if(c.mainAddr)html+=drow('住所',`${c.mainZip?'〒'+esc(c.mainZip)+' ':''}${esc(c.mainAddr)} <a href="${gmapUrl(c.mainAddr)}" target="_blank" style="font-size:13px">🗺</a>${cpBtn((c.mainZip?c.mainZip+' ':'')+c.mainAddr)}`);
     if(c.prevAddr)html+=drow('前住所',esc(c.prevAddr));
     if(c.hkAddr)html+=drow('本籍地',esc(c.hkAddr));
     if(c.hoterasu&&c.hoterasu!=='no')html+=drow('法テラス',c.hoterasu==='yes'?'あり':'申請中');
   }else{
     html+=drow('会社名（屋号）',`<strong>${esc(c.companyName)}</strong>`);
     if(c.repTitle||c.representative)html+=drow('代表者',`${esc(c.repTitle||'')} ${esc(c.representative||'')}`.trim());
-    if((c.phones||[]).length)html+=drow('電話番号',c.phones.map(p=>`${esc(p.type)}: ${esc(p.number)}`).join('<br>'));
-    if(c.email)html+=drow('メール',esc(c.email));
-    if(c.mainAddr)html+=drow('本店所在地',`${c.mainZip?'〒'+esc(c.mainZip)+' ':''}${esc(c.mainAddr)} <a href="${gmapUrl(c.mainAddr)}" target="_blank" style="font-size:13px">🗺</a>`);
+    if((c.phones||[]).length)html+=drow('電話番号',c.phones.map(p=>`${esc(p.type)}: <a href="tel:${p.number}" style="color:inherit;text-decoration:none">${esc(p.number)}</a>${cpBtn(p.number)}`).join('<br>'));
+    if(c.email)html+=drow('メール',`<a href="mailto:${esc(c.email)}" style="color:inherit;text-decoration:none">${esc(c.email)}</a>${cpBtn(c.email)}`);
+    if(c.mainAddr)html+=drow('本店所在地',`${c.mainZip?'〒'+esc(c.mainZip)+' ':''}${esc(c.mainAddr)} <a href="${gmapUrl(c.mainAddr)}" target="_blank" style="font-size:13px">🗺</a>${cpBtn((c.mainZip?c.mainZip+' ':'')+c.mainAddr)}`);
     if(c.retainerContract==='yes')html+=drow('顧問契約',`あり（${fmtDate(c.retainerDate)}締結）`);
   }
   if(c.referrer)html+=drow('紹介者',`${esc(c.referrer)}${c.referrerAttr?' ('+esc(c.referrerAttr)+')':''}`);
@@ -974,6 +987,28 @@ function offerPdfDownload(dataUrl,filename){
   });
 }
 
+/* ════════ 相手方種別切り替え ════════ */
+function switchOppType(type){
+  const indiv=document.getElementById('opp_indivFields');
+  const corp=document.getElementById('opp_corpFields');
+  if(indiv)indiv.style.display=type==='individual'?'block':'none';
+  if(corp)corp.style.display=type==='corporate'?'block':'none';
+  syncOppName();
+}
+function syncOppName(){
+  const type=document.querySelector('input[name="oppType"]:checked')?.value||'individual';
+  let name='';
+  if(type==='individual'){
+    const ln=document.getElementById('cs_oppLastName')?.value||'';
+    const fn=document.getElementById('cs_oppFirstName')?.value||'';
+    name=ln+fn;
+  }else{
+    name=document.getElementById('cs_oppCorpName')?.value||'';
+  }
+  const el=document.getElementById('cs_opp');
+  if(el)el.value=name;
+}
+
 /* ════════════ AI読み取り ════════════ */
 async function callClaudeApi(messages){
   const apiKey=loadApiKey();
@@ -1133,7 +1168,15 @@ function openCaseDetail(id){
   if(c.caseType==='client'&&cl)html+=drow('顧客（依頼者）',`<span onclick="closeOv();openClientDetail('${cl.id}')" style="color:var(--navy);cursor:pointer">${esc(clientName(cl))} ›</span>`);
   if(c.caseType==='client'){
     html+=drow('委任契約',c.commissionSigned==='yes'?'<span class="badge badge-green">締結済み</span>':'<span class="badge badge-gray">未締結</span>');
-    if(c.opponent?.name)html+=drow('相手方',`${esc(c.opponent.name)}${c.opponent.tel?' / ☎'+esc(c.opponent.tel):''}`);
+    if(c.opponent?.name){
+    let oppDisp='<strong>'+esc(c.opponent.name)+'</strong>';
+    if(c.opponent.type==='individual'&&(c.opponent.lastNameKana||c.opponent.firstNameKana))
+      oppDisp+=` <span style="font-size:12px;color:var(--text3)">${esc((c.opponent.lastNameKana||'')+(c.opponent.firstNameKana||''))}</span>`;
+    if(c.opponent.type==='corporate'&&c.opponent.corpRep)
+      oppDisp+=` <span style="font-size:12px;color:var(--text3)">（代表: ${esc(c.opponent.corpRep)}）</span>`;
+    if(c.opponent.tel)oppDisp+=`<br><a href="tel:${c.opponent.tel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.tel)}</a>${cpBtn(c.opponent.tel)}`;
+    html+=drow('相手方',oppDisp);
+  }
     if(c.trialType)html+=drow('裁判種別',esc(c.trialType));
     if(c.trialCourt)html+=drow('裁判所',`${esc(c.trialCourt)}${c.trialDept?' '+esc(c.trialDept):''}`);
     if(c.trialClerk)html+=drow('書記官',esc(c.trialClerk));
@@ -1237,7 +1280,14 @@ function saveCase(existingId=null){
   if(type==='client'){
     Object.assign(c,{
       clientId:val('cs_clientId'),commissionSigned:val('cs_commission'),
-      opponent:{name:val('cs_opp'),tel:val('cs_oppTel')},
+      opponent:{
+      type:document.querySelector('input[name="oppType"]:checked')?.value||'individual',
+      name:val('cs_opp'),
+      lastName:val('cs_oppLastName'),firstName:val('cs_oppFirstName'),
+      lastNameKana:val('cs_oppLastNameKana'),firstNameKana:val('cs_oppFirstNameKana'),
+      corpName:val('cs_oppCorpName'),corpRep:val('cs_oppCorpRep'),
+      tel:normalizePhone(val('cs_oppTel')),
+    },
       trialType:val('cs_trialType'),trialNextDate:val('cs_nextDate'),
     });
   }else{
