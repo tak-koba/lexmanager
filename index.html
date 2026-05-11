@@ -350,7 +350,7 @@ function clientName(c){
   if(!c)return'—';
   return c.type==='corporate'?(c.companyName||''):((c.lastName||'')+(c.firstName||'')||'（未設定）');
 }
-function normalizePhone(s){ return(s||'').replace(/[\s\u3000　-]/g,''); }
+function normalizePhone(s){var s2=(s||'');s2=s2.replace(/-/g,'');s2=s2.replace(/ /g,'');s2=s2.replace(/　/g,'');return s2;}
 function daysUntil(d){
   if(!d)return null;
   const base=d.length>10?new Date(d):new Date(d+'T00:00:00');
