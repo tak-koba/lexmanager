@@ -1409,9 +1409,11 @@ function toggleCaseType(type){
 function saveCase(existingId=null){
   const type=document.querySelector('input[name="caseType"]:checked')?.value||'client';
   const name=val('cs_name');if(!name){alert('案件名を入力してください');return;}
+  const _existingCase=existingId?DB.cases.find(x=>x.id===existingId):null;
   const c={
     id:existingId||uid(),caseName:name,caseType:type,
-    createdAt:existingId?(DB.cases.find(x=>x.id===existingId)?.createdAt||today()):today(),
+    createdAt:_existingCase?.createdAt||today(),
+    isArchived:_existingCase?.isArchived||false,
     notes:val('cs_notes'),
     trialCourt:val('cs_court'),trialDept:val('cs_dept'),trialClerk:val('cs_clerk'),
     trialTel:normalizePhone(val('cs_tel')),trialFax:normalizePhone(val('cs_fax')),
