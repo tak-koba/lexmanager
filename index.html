@@ -1174,8 +1174,19 @@ function openCaseDetail(id){
       oppDisp+=` <span style="font-size:12px;color:var(--text3)">${esc((c.opponent.lastNameKana||'')+(c.opponent.firstNameKana||''))}</span>`;
     if(c.opponent.type==='corporate'&&c.opponent.corpRep)
       oppDisp+=` <span style="font-size:12px;color:var(--text3)">（代表: ${esc(c.opponent.corpRep)}）</span>`;
+    if(c.opponent.contactName)oppDisp+=` / 担当: ${esc(c.opponent.contactName)}`;
     if(c.opponent.tel)oppDisp+=`<br><a href="tel:${c.opponent.tel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.tel)}</a>${cpBtn(c.opponent.tel)}`;
+    if(c.opponent.email)oppDisp+=`<br><a href="mailto:${esc(c.opponent.email)}" style="color:inherit;text-decoration:none">${esc(c.opponent.email)}</a>${cpBtn(c.opponent.email)}`;
+    if(c.opponent.addr)oppDisp+=`<br>${esc(c.opponent.addr)}`;
     html+=drow('相手方',oppDisp);
+    if(c.opponent.hasLawyer==='yes'){
+      let lwDisp=esc(c.opponent.lawyerName||'');
+      if(c.opponent.lawyerTel)lwDisp+=`<br><a href="tel:${c.opponent.lawyerTel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.lawyerTel)}</a>${cpBtn(c.opponent.lawyerTel)}`;
+      if(c.opponent.lawyerFax)lwDisp+=` / FAX: ${esc(c.opponent.lawyerFax)}`;
+      if(c.opponent.lawyerEmail)lwDisp+=`<br><a href="mailto:${esc(c.opponent.lawyerEmail)}" style="color:inherit;text-decoration:none">${esc(c.opponent.lawyerEmail)}</a>`;
+      if(c.opponent.lawyerAddr)lwDisp+=`<br>${esc(c.opponent.lawyerAddr)}`;
+      html+=drow('相手方代理人',lwDisp);
+    }
   }
     if(c.trialType)html+=drow('裁判種別',esc(c.trialType));
     if(c.trialCourt)html+=drow('裁判所',`${esc(c.trialCourt)}${c.trialDept?' '+esc(c.trialDept):''}`);
@@ -1220,6 +1231,9 @@ function confirmDeleteCase(id){
 function openCaseForm(existing=null,clientId=null){
   const clientOpts=DB.clients.map(c=>`<option value="${c.id}" ${(existing?.clientId||clientId)===c.id?'selected':''}>${esc(clientName(c))}</option>`).join('');
   const isClient=existing?existing.caseType==='client':true;
+  const oppType=existing?.opponent?.type||'individual';
+  const isOppIndiv=oppType==='individual';
+  const hl=existing?.opponent?.hasLawyer==='yes';
   const html=`<div class="form-wrap">
   <div class="form-section">
     <div class="form-section-label">案件種別</div>
@@ -1235,16 +1249,49 @@ function openCaseForm(existing=null,clientId=null){
     <div class="form-row" id="cs_roleRow" style="display:${!isClient?'flex':'none'}"><div class="form-label-col">役割</div><div class="form-input-col"><select class="fc" id="cs_role">${courtRoles.map(r=>`<option ${existing?.courtRole===r?'selected':''}>${r}</option>`).join('')}</select></div></div>
   </div>
   <div class="form-section" id="cs_clientFields" style="display:${isClient?'block':'none'}">
-    <div class="form-section-label">委任・相手方</div>
+    <div class="form-section-label">委任契約</div>
     <div class="form-row"><div class="form-label-col">委任契約</div><div class="form-input-col"><select class="fc" id="cs_commission"><option value="no">未締結</option><option value="yes" ${existing?.commissionSigned==='yes'?'selected':''}>締結済み</option></select></div></div>
-    <div class="form-row"><div class="form-label-col">相手方</div><div class="form-input-col"><input class="fc" type="text" id="cs_opp" value="${esc(existing?.opponent?.name||'')}"></div></div>
-    <div class="form-row"><div class="form-label-col">相手方TEL</div><div class="form-input-col"><input class="fc" type="tel" id="cs_oppTel" value="${esc(existing?.opponent?.tel||'')}"></div></div>
-    <div class="form-row"><div class="form-label-col">裁判種別</div><div class="form-input-col"><select class="fc" id="cs_trialType"><option value="">—</option>${trialTypes.map(t=>`<option ${existing?.trialType===t?'selected':''}>${t}</option>`).join('')}</select></div></div>
-    <div class="form-row"><div class="form-label-col">次回期日</div><div class="form-input-col"><input class="fc" type="datetime-local" id="cs_nextDate" value="${existing?.trialNextDate||''}"></div></div>
   </div>
-  <div class="form-section" id="cs_courtFields" style="display:${!isClient?'block':'none'}">
-    <div class="form-section-label">期日</div>
-    <div class="form-row"><div class="form-label-col">次回期日</div><div class="form-input-col"><input class="fc" type="datetime-local" id="cs_courtNextDate" value="${existing?.nextDate||''}"></div></div>
+  <div class="form-section" id="cs_oppSection" style="display:${isClient?'block':'none'}">
+    <div class="form-section-label">相手方情報</div>
+    <div class="form-row"><div class="form-label-col">相手方種別</div><div class="form-input-col"><div class="radio-row">
+      <label><input type="radio" name="oppType" value="individual" ${isOppIndiv?'checked':''} onchange="switchOppType('individual')"> 個人</label>
+      <label><input type="radio" name="oppType" value="corporate" ${!isOppIndiv?'checked':''} onchange="switchOppType('corporate')"> 法人・個人事業主</label>
+    </div></div></div>
+    <div id="opp_indivFields" style="display:${isOppIndiv?'block':'none'}">
+      <div class="form-row"><div class="form-label-col">姓</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppLastName" value="${esc(existing?.opponent?.lastName||(!existing?.opponent?.type||isOppIndiv?existing?.opponent?.name:'')||'')}" oninput="syncOppName()"></div></div>
+      <div class="form-row"><div class="form-label-col">名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppFirstName" value="${esc(existing?.opponent?.firstName||'')}" oninput="syncOppName()"></div></div>
+      <div class="form-row"><div class="form-label-col">姓（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppLastNameKana" value="${esc(existing?.opponent?.lastNameKana||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">名（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppFirstNameKana" value="${esc(existing?.opponent?.firstNameKana||'')}"></div></div>
+    </div>
+    <div id="opp_corpFields" style="display:${!isOppIndiv?'block':'none'}">
+      <div class="form-row"><div class="form-label-col">会社名・屋号</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppCorpName" value="${esc(existing?.opponent?.corpName||(existing?.opponent?.type==='corporate'?existing?.opponent?.name:'')||'')}" oninput="syncOppName()"></div></div>
+      <div class="form-row"><div class="form-label-col">代表者名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppCorpRep" value="${esc(existing?.opponent?.corpRep||'')}"></div></div>
+    </div>
+    <input type="hidden" id="cs_opp" value="${esc(existing?.opponent?.name||'')}">
+    <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_oppTel" value="${esc(existing?.opponent?.tel||'')}"></div></div>
+    <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" id="cs_oppEmail" value="${esc(existing?.opponent?.email||'')}"></div></div>
+    <div class="form-row"><div class="form-label-col">担当者名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppContact" value="${esc(existing?.opponent?.contactName||'')}"></div></div>
+    <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" id="cs_oppZip" value="${esc(existing?.opponent?.zip||'')}" maxlength="8" style="flex:1"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZip('cs_oppZip','cs_oppAddr')">検索</button></div></div>
+    <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppAddr" value="${esc(existing?.opponent?.addr||'')}"></div></div>
+  </div>
+  <div class="form-section" id="cs_lawyerSection" style="display:${isClient?'block':'none'}">
+    <div class="form-section-label">相手方代理人</div>
+    <div class="form-row"><div class="form-label-col">代理人弁護士</div><div class="form-input-col"><select class="fc" id="cs_hasLawyer" onchange="document.getElementById('cs_lawyerDetail').style.display=this.value==='yes'?'block':'none'"><option value="no">なし</option><option value="yes" ${hl?'selected':''}>あり</option></select></div></div>
+    <div id="cs_lawyerDetail" style="display:${hl?'block':'none'}">
+      <div class="form-row"><div class="form-label-col">弁護士氏名</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerName" value="${esc(existing?.opponent?.lawyerName||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerTel" value="${esc(existing?.opponent?.lawyerTel||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">FAX番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerFax" value="${esc(existing?.opponent?.lawyerFax||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" id="cs_lawyerEmail" value="${esc(existing?.opponent?.lawyerEmail||'')}"></div></div>
+      <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" id="cs_lawyerZip" value="${esc(existing?.opponent?.lawyerZip||'')}" maxlength="8" style="flex:1"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZip('cs_lawyerZip','cs_lawyerAddr')">検索</button></div></div>
+      <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerAddr" value="${esc(existing?.opponent?.lawyerAddr||'')}"></div></div>
+    </div>
+  </div>
+  <div class="form-section">
+    <div class="form-section-label">裁判種別・次回期日</div>
+    <div class="form-row" id="cs_trialTypeRow" style="display:${isClient?'flex':'none'}"><div class="form-label-col">裁判種別</div><div class="form-input-col"><select class="fc" id="cs_trialType"><option value="">—</option>${trialTypes.map(t=>`<option ${existing?.trialType===t?'selected':''}>${t}</option>`).join('')}</select></div></div>
+    <div class="form-row" id="cs_trialMethodRow" style="display:${isClient?'flex':'none'}"><div class="form-label-col">裁判方法</div><div class="form-input-col"><select class="fc" id="cs_trialMethod"><option value="">—</option>${trialMethods.map(t=>`<option ${existing?.trialMethod===t?'selected':''}>${t}</option>`).join('')}</select></div></div>
+    <div class="form-row"><div class="form-label-col">次回期日</div><div class="form-input-col"><input class="fc" type="datetime-local" id="cs_nextDate" value="${existing?.trialNextDate||existing?.nextDate||''}"></div></div>
   </div>
   <div class="form-section">
     <div class="form-section-label">裁判所情報</div>
@@ -1252,6 +1299,7 @@ function openCaseForm(existing=null,clientId=null){
     <div class="form-row"><div class="form-label-col">担当部</div><div class="form-input-col"><input class="fc" type="text" id="cs_dept" value="${esc(existing?.trialDept||'')}"></div></div>
     <div class="form-row"><div class="form-label-col">書記官</div><div class="form-input-col"><input class="fc" type="text" id="cs_clerk" value="${esc(existing?.trialClerk||'')}"></div></div>
     <div class="form-row"><div class="form-label-col">裁判所TEL</div><div class="form-input-col"><input class="fc" type="tel" id="cs_tel" value="${esc(existing?.trialTel||'')}"></div></div>
+    <div class="form-row"><div class="form-label-col">裁判所FAX</div><div class="form-input-col"><input class="fc" type="tel" id="cs_fax" value="${esc(existing?.trialFax||'')}"></div></div>
   </div>
   <div class="form-section">
     <div class="form-section-label">備考・準備事項</div>
@@ -1266,7 +1314,10 @@ function toggleCaseType(type){
   document.getElementById('cs_clientRow').style.display=isClient?'flex':'none';
   document.getElementById('cs_roleRow').style.display=isClient?'none':'flex';
   document.getElementById('cs_clientFields').style.display=isClient?'block':'none';
-  document.getElementById('cs_courtFields').style.display=isClient?'none':'block';
+  document.getElementById('cs_oppSection').style.display=isClient?'block':'none';
+  document.getElementById('cs_lawyerSection').style.display=isClient?'block':'none';
+  document.getElementById('cs_trialTypeRow').style.display=isClient?'flex':'none';
+  document.getElementById('cs_trialMethodRow').style.display=isClient?'flex':'none';
 }
 function saveCase(existingId=null){
   const type=document.querySelector('input[name="caseType"]:checked')?.value||'client';
@@ -1275,23 +1326,34 @@ function saveCase(existingId=null){
     id:existingId||uid(),caseName:name,caseType:type,
     createdAt:existingId?(DB.cases.find(x=>x.id===existingId)?.createdAt||today()):today(),
     notes:val('cs_notes'),
-    trialCourt:val('cs_court'),trialDept:val('cs_dept'),trialClerk:val('cs_clerk'),trialTel:val('cs_tel'),
+    trialCourt:val('cs_court'),trialDept:val('cs_dept'),trialClerk:val('cs_clerk'),
+    trialTel:normalizePhone(val('cs_tel')),trialFax:normalizePhone(val('cs_fax')),
   };
   if(type==='client'){
+    syncOppName();
     Object.assign(c,{
       clientId:val('cs_clientId'),commissionSigned:val('cs_commission'),
+      trialType:val('cs_trialType'),trialMethod:val('cs_trialMethod'),
+      trialNextDate:val('cs_nextDate'),
       opponent:{
-      type:document.querySelector('input[name="oppType"]:checked')?.value||'individual',
-      name:val('cs_opp'),
-      lastName:val('cs_oppLastName'),firstName:val('cs_oppFirstName'),
-      lastNameKana:val('cs_oppLastNameKana'),firstNameKana:val('cs_oppFirstNameKana'),
-      corpName:val('cs_oppCorpName'),corpRep:val('cs_oppCorpRep'),
-      tel:normalizePhone(val('cs_oppTel')),
-    },
-      trialType:val('cs_trialType'),trialNextDate:val('cs_nextDate'),
+        type:document.querySelector('input[name="oppType"]:checked')?.value||'individual',
+        name:val('cs_opp'),
+        lastName:val('cs_oppLastName'),firstName:val('cs_oppFirstName'),
+        lastNameKana:val('cs_oppLastNameKana'),firstNameKana:val('cs_oppFirstNameKana'),
+        corpName:val('cs_oppCorpName'),corpRep:val('cs_oppCorpRep'),
+        tel:normalizePhone(val('cs_oppTel')),email:val('cs_oppEmail'),
+        zip:val('cs_oppZip'),addr:val('cs_oppAddr'),
+        contactName:val('cs_oppContact'),
+        hasLawyer:val('cs_hasLawyer'),
+        lawyerName:val('cs_lawyerName'),
+        lawyerTel:normalizePhone(val('cs_lawyerTel')),
+        lawyerFax:normalizePhone(val('cs_lawyerFax')),
+        lawyerEmail:val('cs_lawyerEmail'),
+        lawyerZip:val('cs_lawyerZip'),lawyerAddr:val('cs_lawyerAddr'),
+      },
     });
   }else{
-    Object.assign(c,{courtRole:val('cs_role'),nextDate:val('cs_courtNextDate')});
+    Object.assign(c,{courtRole:val('cs_role'),nextDate:val('cs_nextDate')});
   }
   if(existingId){const idx=DB.cases.findIndex(x=>x.id===existingId);if(idx>=0)DB.cases[idx]=c;}
   else DB.cases.push(c);
