@@ -19,9 +19,9 @@ const PASSWORD = '1192';
     screen.innerHTML=`
       <div style="font-size:52px">⚖</div>
       <div style="color:#fff;font-size:22px;font-weight:700;letter-spacing:.04em">LexManager</div>
-      <div style="color:rgba(255,255,255,0.5);font-size:13px">パスワードを入力してください</div>
-      <input id="pwInput" type="password" placeholder="パスワード"
-        style="width:100%;max-width:300px;padding:14px 16px;border-radius:12px;border:none;font-size:17px;text-align:center;outline:none;background:rgba(255,255,255,0.12);color:#fff;caret-color:#fff"
+      <div style="color:rgba(255,255,255,0.5);font-size:13px">PINを入力してください</div>
+      <input id="pwInput" type="tel" inputmode="numeric" pattern="[0-9]*" placeholder="PIN"
+        style="width:100%;max-width:300px;padding:14px 16px;border-radius:12px;border:none;font-size:24px;text-align:center;outline:none;background:rgba(255,255,255,0.12);color:#fff;caret-color:#fff;letter-spacing:8px"
         onkeydown="if(event.key==='Enter')checkPw()">
       <button onclick="checkPw()"
         style="width:100%;max-width:300px;padding:14px;border-radius:12px;border:none;background:#C9A84C;color:#0F1F3D;font-size:17px;font-weight:700;cursor:pointer">
@@ -40,7 +40,7 @@ function checkPw(){
     document.body.style.display='';
   } else {
     const err = document.getElementById('pwErr');
-    if(err) err.textContent='パスワードが違います';
+    if(err) err.textContent='PINが違います';
     const inp = document.getElementById('pwInput');
     if(inp){ inp.value=''; inp.focus(); }
   }
@@ -75,7 +75,7 @@ input,select,textarea,button{font-family:inherit;font-size:15px;-webkit-appearan
 .tab-item.active{color:var(--navy)}
 .tab-icon{font-size:22px;line-height:1}
 .tab-badge{position:absolute;top:2px;right:50%;transform:translateX(14px);background:var(--red);color:#fff;font-size:9px;font-weight:700;padding:1px 5px;border-radius:8px;min-width:16px;text-align:center;display:none}
-.section-header{padding:20px 16px 6px;font-size:13px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.section-header{padding:20px 16px 6px;font-size:13px;font-weight:600;color:var(--text3);letter-spacing:.02em}
 .list-card{background:var(--white);border-radius:var(--radius2);margin:0 16px 12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.07)}
 .list-item{display:flex;align-items:center;padding:13px 16px;border-bottom:0.5px solid var(--border);gap:12px;cursor:pointer;background:var(--white);-webkit-user-select:none}
 .list-item:last-child{border-bottom:none}
@@ -93,7 +93,7 @@ input,select,textarea,button{font-family:inherit;font-size:15px;-webkit-appearan
 .badge-gray{background:var(--bg2);color:var(--text2)}
 .form-wrap{padding-bottom:40px}
 .form-section{background:var(--white);border-radius:var(--radius2);margin:12px 16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.07)}
-.form-section-label{padding:14px 16px 6px;font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.05em;border-bottom:0.5px solid var(--border)}
+.form-section-label{padding:14px 16px 6px;font-size:12px;font-weight:700;color:var(--navy);letter-spacing:.05em;border-bottom:0.5px solid var(--border)}
 .form-row{display:flex;align-items:center;padding:12px 16px;border-bottom:0.5px solid var(--border);gap:10px;min-height:46px}
 .form-row:last-child{border-bottom:none}
 .form-label-col{font-size:13px;color:var(--text2);width:105px;flex-shrink:0;line-height:1.3}
@@ -115,7 +115,7 @@ textarea.fc{resize:none;line-height:1.5}
 .btn-sm{padding:7px 14px;font-size:13px}
 .detail-wrap{padding-bottom:40px}
 .detail-section{background:var(--white);border-radius:var(--radius2);margin:12px 16px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,0.07)}
-.detail-section-title{padding:12px 16px;font-size:12px;font-weight:700;color:var(--navy);text-transform:uppercase;letter-spacing:.05em;border-bottom:0.5px solid var(--border)}
+.detail-section-title{padding:12px 16px;font-size:12px;font-weight:700;color:var(--navy);letter-spacing:.05em;border-bottom:0.5px solid var(--border)}
 .detail-row{display:flex;padding:11px 16px;border-bottom:0.5px solid var(--border);gap:10px}
 .detail-row:last-child{border-bottom:none}
 .detail-label{font-size:12px;color:var(--text3);width:96px;flex-shrink:0;padding-top:1px;line-height:1.4}
