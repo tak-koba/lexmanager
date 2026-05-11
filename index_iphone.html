@@ -371,7 +371,20 @@ function fmtDT(d){ if(!d)return'—'; return d.length>10?d.replace('T',' '):d.re
 function esc(s){ return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function val(id){ const e=document.getElementById(id); return e?e.value.trim():''; }
 function setVal(id,v){ const e=document.getElementById(id); if(e)e.value=v||''; }
-function clientKana(c){if(!c)return'';return c.type==='corporate'?(c.companyName||''):(c.lastNameKana||'')+(c.firstNameKana||'')+(c.lastName||'')+(c.firstName||'');}
+function clientKana(c){
+  if(!c)return'';
+  if(c.type==='corporate') return c.companyName||'';
+  const kana=(c.lastNameKana||'')+(c.firstNameKana||'');
+  if(kana) return kana;
+  return (c.lastName||'')+(c.firstName||'');
+}
+function sortByKana(list, getClient){
+  return list.sort((a,b)=>{
+    const ka=clientKana(getClient(a));
+    const kb=clientKana(getClient(b));
+    return ka.localeCompare(kb,'ja',{sensitivity:'base'});
+  });
+}
 function clientName(c){
   if(!c)return'—';
   return c.type==='corporate'?(c.companyName||''):((c.lastName||'')+(c.firstName||'')||'（未設定）');
@@ -416,7 +429,7 @@ function todoSubLabel(t){
 function updateBadges(){
   const bc=document.getElementById('badge-cases');
   const bt=document.getElementById('badge-todos');
-  const cases=DB.cases.length;
+  const cases=DB.cases.filter(c=>!c.isArchived).length;
   const todos=DB.todos.filter(t=>!t.done).length;
   if(bc){bc.textContent=cases;bc.style.display=cases?'':'none';}
   if(bt){bt.textContent=todos;bt.style.display=todos?'':'none';}
@@ -514,7 +527,7 @@ function renderDashboard(el){
   const now=new Date();
   const soon=DB.todos.filter(t=>!t.done&&t.deadline).sort((a,b)=>a.deadline.localeCompare(b.deadline)).slice(0,5);
   const overdue=DB.todos.filter(t=>!t.done&&t.deadline&&new Date(t.deadline)<now).length;
-  const recent=[...DB.cases].sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,5);
+  const recent=[...DB.cases].filter(c=>!c.isArchived).sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||'')).slice(0,5);
   const lastSaved = localStorage.getItem('lexmanager_last_saved');
   const lastLoaded = localStorage.getItem('lexmanager_last_loaded');
   el.innerHTML=`
@@ -568,7 +581,7 @@ function filterClients(){
     const ph=(c.phones||[]).map(p=>p.number).join('');
     return(!q||nm.includes(q)||ph.includes(q)||(c.email||'').toLowerCase().includes(q))&&(tf==='all'||c.type===tf);
   });
-  if(sort==='kana') list.sort((a,b)=>clientKana(a).localeCompare(clientKana(b),'ja'));
+  if(sort==='kana') sortByKana(list, c=>c);
   else if(sort==='type') list.sort((a,b)=>a.type.localeCompare(b.type));
   else if(sort==='regAt') list.sort((a,b)=>(b.registeredAt||'').localeCompare(a.registeredAt||''));
   const el=document.getElementById('clientList');if(!el)return;
@@ -1177,9 +1190,32 @@ function renderCases(el){
   el.innerHTML=`
   <div class="search-wrap"><div class="search-inner">🔍<input type="text" id="caseSearch" placeholder="案件名・顧客名・裁判所で検索" oninput="filterCases()"></div></div>
   <div class="segment"><button class="seg-btn active" onclick="setCaseSeg('all',this)">すべて</button><button class="seg-btn" onclick="setCaseSeg('client',this)">顧客</button><button class="seg-btn" onclick="setCaseSeg('court',this)">裁判所</button></div>
-  <div style="padding:4px 16px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" id="caseSort" onchange="filterCases()"><option value="createdAt">登録日順</option><option value="type">種別順</option><option value="clientKana">顧客五十音順</option><option value="nextDate">次回期日順</option><option value="todo">ToDo有り順</option></select></div>
+  <div style="padding:4px 16px 8px;display:flex;align-items:center;gap:8px">
+    <span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span>
+    <select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" id="caseSort" onchange="filterCases()"><option value="createdAt">登録日順</option><option value="type">種別順</option><option value="clientKana">顧客五十音順</option><option value="nextDate">次回期日順</option><option value="todo">ToDo有り順</option></select>
+  </div>
+  <div style="display:flex;margin:0 16px 8px;border:0.5px solid var(--border);border-radius:10px;overflow:hidden">
+    <button id="caseTab_active" style="flex:1;padding:8px;border:none;font-size:13px;font-weight:600;background:var(--navy);color:#fff;cursor:pointer" onclick="setCaseTab('active')">進行中</button>
+    <button id="caseTab_archived" style="flex:1;padding:8px;border:none;font-size:13px;font-weight:600;background:var(--white);color:var(--text2);cursor:pointer" onclick="setCaseTab('archived')">アーカイブ</button>
+  </div>
   <div id="caseList"></div><div style="height:20px"></div>`;
   window._caseFil='all'; filterCases();
+}
+function setCaseTab(tab){
+  window._caseTab=tab;
+  const btnA=document.getElementById('caseTab_active');
+  const btnAr=document.getElementById('caseTab_archived');
+  if(btnA){btnA.style.background=tab==='active'?'var(--navy)':'var(--white)';btnA.style.color=tab==='active'?'#fff':'var(--text2)';}
+  if(btnAr){btnAr.style.background=tab==='archived'?'var(--navy)':'var(--white)';btnAr.style.color=tab==='archived'?'#fff':'var(--text2)';}
+  filterCases();
+}
+function toggleCaseArchive(id){
+  const c=DB.cases.find(x=>x.id===id);if(!c)return;
+  const msg=c.isArchived?'この案件を進行中に戻しますか？':'この案件を終了してアーカイブしますか？';
+  showConfirm(msg,()=>{
+    c.isArchived=!c.isArchived;
+    saveDB();filterCases();
+  });
 }
 function setCaseSeg(t,btn){
   window._caseFil=t;
@@ -1190,7 +1226,10 @@ function filterCases(){
   const q=(document.getElementById('caseSearch')?.value||'').toLowerCase();
   const tf=window._caseFil||'all';
   const sort=document.getElementById('caseSort')?.value||'createdAt';
+  const tab=window._caseTab||'active';
   let list=DB.cases.filter(c=>{
+    const matchTab=tab==='archived'?c.isArchived===true:!c.isArchived;
+    if(!matchTab)return false;
     const cl=DB.clients.find(x=>x.id===c.clientId);
     return(!q||(c.caseName||'').toLowerCase().includes(q)||clientName(cl).toLowerCase().includes(q)||(c.trialCourt||'').toLowerCase().includes(q))&&(tf==='all'||c.caseType===tf);
   });
@@ -1201,7 +1240,7 @@ function filterCases(){
     const nd=c.caseType==='client'?c.trialNextDate:c.nextDate;
     const label=c.caseType==='court'?(c.trialCourt||'（裁判所未設定）'):clientName(cl);
     const tc=DB.todos.filter(t=>t.caseId===c.id&&!t.done).length;
-    return`<div class="list-item" onclick="openCaseDetail('${c.id}')"><div class="list-main"><div class="list-name">${esc(c.caseName)}</div><div class="list-sub">${esc(label)}${nd?' · '+fmtDate(nd):''}</div></div>${tc?`<span class="badge badge-amber">${tc}</span>`:''}<span class="badge ${c.caseType==='court'?'badge-navy':'badge-green'}">${c.caseType==='court'?'裁判所':'顧客'}</span><span class="list-arrow">›</span></div>`;
+    return`<div class="list-item" onclick="openCaseDetail('${c.id}')" style="${c.isArchived?'opacity:0.6;':''}"><div class="list-main"><div class="list-name">${esc(c.caseName)}</div><div class="list-sub">${esc(label)}${nd?' · '+fmtDate(nd):''}</div></div>${tc?`<span class="badge badge-amber">${tc}</span>`:''}<span class="badge ${c.caseType==='court'?'badge-navy':'badge-green'}">${c.caseType==='court'?'裁判所':'顧客'}</span><button onclick="event.stopPropagation();toggleCaseArchive('${c.id}')" style="background:none;border:0.5px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text3);flex-shrink:0;cursor:pointer;margin-left:4px">${c.isArchived?'戻す':'終了'}</button><span class="list-arrow">›</span></div>`;
   }).join('')}</div>`;
 }
 function openCaseDetail(id){
@@ -1413,7 +1452,7 @@ function renderTodos(el){
   const todoSort=window._todoSort||'deadline';
   let todos=DB.todos.filter(t=>!t.done);
   if(todoSort==='deadline') todos.sort((a,b)=>(a.deadline||'9').localeCompare(b.deadline||'9'));
-  else if(todoSort==='clientKana'){todos.sort((a,b)=>{const ca=DB.cases.find(x=>x.id===a.caseId);const cb=DB.cases.find(x=>x.id===b.caseId);const cla=ca?DB.clients.find(x=>x.id===ca.clientId):null;const clb=cb?DB.clients.find(x=>x.id===cb.clientId):null;return clientKana(cla||{}).localeCompare(clientKana(clb||{}),'ja');});}
+  else if(todoSort==='clientKana') sortByKana(todos, t=>{const cs=DB.cases.find(x=>x.id===t.caseId);return cs?DB.clients.find(x=>x.id===cs.clientId)||{}:{};});
   const done=DB.todos.filter(t=>t.done).slice(0,10);
   el.innerHTML=`
   <div style="padding:8px 16px 4px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" onchange="window._todoSort=this.value;renderTodos(document.getElementById('mainContent'))"><option value="deadline" ${(window._todoSort||'deadline')==='deadline'?'selected':''}>期限順</option><option value="clientKana" ${window._todoSort==='clientKana'?'selected':''}>顧客五十音順</option></select></div>
