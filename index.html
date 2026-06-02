@@ -196,6 +196,9 @@ textarea.fc{resize:none;line-height:1.5}
       <span class="tab-icon">✅</span><span>ToDo</span>
       <span class="tab-badge" id="badge-todos">0</span>
     </button>
+    <button class="tab-item" data-tab="hayami" onclick="switchTab('hayami')">
+      <span class="tab-icon">📅</span><span>早見表</span>
+    </button>
     <button class="tab-item" data-tab="settings" onclick="switchTab('settings')">
       <span class="tab-icon">⚙️</span><span>設定</span>
     </button>
@@ -267,8 +270,12 @@ let G_cameraTarget = null; // {type:'card'|'attachment', id:string}
 
 /* ─── データ保存・読込（localStorage） ─── */
 function saveDB(){
-  try{ localStorage.setItem('lexmanager_db', JSON.stringify(DB)); }
-  catch(e){ alert('保存容量が不足しています。OneDriveへ書き出して容量を確保してください。'); }
+  try{
+    localStorage.setItem('lexmanager_db', JSON.stringify(DB));
+  }catch(e){
+    console.error('saveDB error:', e);
+    alert('保存に失敗しました。\n\n原因: '+e.message+'\n\nOneDriveへ書き出して容量を確保してください。');
+  }
   updateBadges();
 }
 function loadDB(){
@@ -457,12 +464,12 @@ async function lookupZip(zipId,addrId){
 function switchTab(tab){
   currentTab=tab;
   document.querySelectorAll('.tab-item').forEach(el=>el.classList.toggle('active',el.dataset.tab===tab));
-  const titles={dashboard:'ダッシュボード',clients:'顧客管理',cases:'案件管理',todos:'ToDo',settings:'設定'};
+  const titles={dashboard:'ダッシュボード',clients:'顧客管理',cases:'案件管理',todos:'ToDo',hayami:'和暦・年齢早見表',settings:'設定'};
   document.getElementById('headerTitle').textContent=titles[tab]||tab;
   const hl=document.getElementById('headerLeft');
   const hr=document.getElementById('headerRight');
   hl.style.visibility='hidden';
-  hr.style.visibility=tab==='dashboard'||tab==='settings'?'hidden':'visible';
+  hr.style.visibility=tab==='dashboard'||tab==='settings'||tab==='hayami'?'hidden':'visible';
   renderTab(tab);
 }
 function renderTab(tab){
@@ -471,6 +478,7 @@ function renderTab(tab){
   else if(tab==='clients') renderClients(ct);
   else if(tab==='cases') renderCases(ct);
   else if(tab==='todos') renderTodos(ct);
+  else if(tab==='hayami') renderHayami(ct);
   else if(tab==='settings') renderSettings(ct);
 }
 function headerLeftAct(){ closeOv(); }
@@ -542,7 +550,7 @@ function renderDashboard(el){
     </div>
   </div>
   <div class="stat-grid">
-    <div class="stat-card"><div class="stat-label">登録顧客数</div><div class="stat-val">${DB.clients.length}</div></div>
+    <div class="stat-card"><div class="stat-label">登録顧客数</div><div class="stat-val">${DB.clients.filter(c=>!c.isArchived).length}</div></div>
     <div class="stat-card"><div class="stat-label">登録案件数</div><div class="stat-val">${DB.cases.length}</div></div>
     <div class="stat-card"><div class="stat-label">未完了ToDo</div><div class="stat-val" style="color:${overdue?'var(--red)':'var(--navy)'}">${DB.todos.filter(t=>!t.done).length}</div>${overdue?`<div class="stat-sub" style="color:var(--red)">期限切れ ${overdue}件</div>`:''}</div>
     <div class="stat-card"><div class="stat-label">直近の期限</div><div class="stat-val" style="font-size:18px">${soon.length?fmtDate(soon[0].deadline):'—'}</div><div class="stat-sub">${soon.length?esc(soon[0].title):''}</div></div>
@@ -564,6 +572,10 @@ function renderClients(el){
   <div class="search-wrap"><div class="search-inner">🔍<input type="text" id="clientSearch" placeholder="氏名・会社名・電話番号で検索" oninput="filterClients()"></div></div>
   <div class="segment"><button class="seg-btn active" onclick="setClientSeg('all',this)">すべて</button><button class="seg-btn" onclick="setClientSeg('individual',this)">個人</button><button class="seg-btn" onclick="setClientSeg('corporate',this)">法人</button></div>
   <div style="padding:4px 16px 8px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" id="clientSort" onchange="filterClients()"><option value="kana">五十音順</option><option value="type">種別順</option><option value="regAt">登録日順</option></select></div>
+  <div style="display:flex;margin:0 16px 8px;border:0.5px solid var(--border);border-radius:10px;overflow:hidden">
+    <button id="clientTab_active" style="flex:1;padding:8px;border:none;font-size:13px;font-weight:600;background:var(--navy);color:#fff;cursor:pointer" onclick="setClientTab('active')">進行中</button>
+    <button id="clientTab_archived" style="flex:1;padding:8px;border:none;font-size:13px;font-weight:600;background:var(--white);color:var(--text2);cursor:pointer" onclick="setClientTab('archived')">アーカイブ</button>
+  </div>
   <div id="clientList"></div><div style="height:20px"></div>`;
   window._cf='all'; filterClients();
 }
@@ -572,11 +584,30 @@ function setClientSeg(t,btn){
   document.querySelectorAll('.segment .seg-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active'); filterClients();
 }
+function setClientTab(tab){
+  window._clientTab=tab;
+  const btnA=document.getElementById('clientTab_active');
+  const btnAr=document.getElementById('clientTab_archived');
+  if(btnA){btnA.style.background=tab==='active'?'var(--navy)':'var(--white)';btnA.style.color=tab==='active'?'#fff':'var(--text2)';}
+  if(btnAr){btnAr.style.background=tab==='archived'?'var(--navy)':'var(--white)';btnAr.style.color=tab==='archived'?'#fff':'var(--text2)';}
+  filterClients();
+}
+function toggleClientArchive(id){
+  const c=DB.clients.find(x=>x.id===id);if(!c)return;
+  const msg=c.isArchived?'この顧客を進行中に戻しますか？':'この顧客を終了してアーカイブしますか？';
+  showConfirm(msg,()=>{
+    c.isArchived=!c.isArchived;
+    saveDB();filterClients();
+  });
+}
 function filterClients(){
   const q=(document.getElementById('clientSearch')?.value||'').toLowerCase();
   const tf=window._cf||'all';
   const sort=document.getElementById('clientSort')?.value||'kana';
+  const tab=window._clientTab||'active';
   let list=DB.clients.filter(c=>{
+    const matchTab=tab==='archived'?c.isArchived===true:!c.isArchived;
+    if(!matchTab)return false;
     const nm=(c.type==='corporate'?c.companyName:(c.lastName||'')+(c.firstName||'')).toLowerCase();
     const ph=(c.phones||[]).map(p=>p.number).join('');
     return(!q||nm.includes(q)||ph.includes(q)||(c.email||'').toLowerCase().includes(q))&&(tf==='all'||c.type===tf);
@@ -591,7 +622,7 @@ function filterClients(){
     const sub=c.type==='corporate'?(c.representative||''):((c.lastNameKana||'')+(c.firstNameKana||''));
     const ph=(c.phones||[])[0]?.number||'';
     const cnt=DB.cases.filter(cs=>cs.clientId===c.id).length;
-    return`<div class="list-item" onclick="openClientDetail('${c.id}')"><div class="list-avatar">${(nm[0]||'?')}</div><div class="list-main"><div class="list-name">${esc(nm)}</div><div class="list-sub">${esc(sub||ph)}</div></div>${cnt?`<span class="badge badge-amber">${cnt}件</span>`:''}<span class="list-arrow">›</span></div>`;
+    return`<div class="list-item" onclick="openClientDetail('${c.id}')" style="${c.isArchived?'opacity:0.6;':''}"><div class="list-avatar">${(nm[0]||'?')}</div><div class="list-main"><div class="list-name">${esc(nm)}</div><div class="list-sub">${esc(sub||ph)}</div></div>${cnt?`<span class="badge badge-amber">${cnt}件</span>`:''}<button onclick="event.stopPropagation();toggleClientArchive('${c.id}')" style="background:none;border:0.5px solid var(--border);border-radius:6px;padding:4px 8px;font-size:11px;color:var(--text3);flex-shrink:0;cursor:pointer;margin-left:4px">${c.isArchived?'戻す':'終了'}</button><span class="list-arrow">›</span></div>`;
   }).join('')}</div>`;
 }
 
@@ -928,23 +959,44 @@ function renderAttachments(){
       </div>
       <div style="margin-bottom:8px">
         <div style="font-size:12px;color:var(--text3);margin-bottom:4px">ラベル</div>
-        <input style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:14px;width:100%" value="${esc(att.label)}" oninput="G_attachments.find(a=>a.id==='${att.id}').label=this.value" placeholder="例：登記情報、住民票、免許証">
+        <input style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;font-size:14px;width:100%" data-att-id="${att.id}" value="${esc(att.label)}" oninput="G_attachments.find(a=>a.id==='${att.id}').label=this.value" placeholder="例：登記情報、住民票、免許証">
       </div>
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:var(--navy);cursor:pointer;padding:4px 0">
         📎 ファイルを選択（画像・PDF）
         <input type="file" id="attFileInput_${att.id}" accept="image/*,.pdf" style="display:none" onchange="onAttachmentFileSelected('${att.id}',this)">
       </label>
-      ${att.dataUrl&&att.fileType==='image'?`<img src="${att.dataUrl}" style="max-width:100%;border-radius:8px;border:1px solid var(--border);margin-top:6px" onclick="window.open(this.src)">`:att.dataUrl?`<div style="margin-top:6px;font-size:13px;color:var(--green)">✅ PDFが読み込まれました</div>`:''}
+      <div id="attPreview_${att.id}">${att.dataUrl&&att.fileType==='image'?`<img src="${att.dataUrl}" style="max-width:100%;border-radius:8px;border:1px solid var(--border);margin-top:6px" onclick="window.open(this.src)">`:att.dataUrl?`<div style="margin-top:6px;font-size:13px;color:var(--green)">✅ PDFが読み込まれました</div>`:''}</div>
     </div>
   `).join('');
 }
 function onAttachmentFileSelected(id,input){
   const file=input.files[0];if(!file)return;
   const att=G_attachments.find(a=>a.id===id);if(!att)return;
-  if(!att.label){att.label=file.name.replace(/\.[^.]+$/,'');}
-  const r=new FileReader();
-  r.onload=e=>{att.dataUrl=e.target.result;att.fileType=file.type==='application/pdf'?'pdf':'image';renderAttachments();};
-  r.readAsDataURL(file);
+  att._file=file;
+  att.fileType=file.type==='application/pdf'?'pdf':'image';
+  if(!att.label){
+    const nameNoExt=file.name.replace(/\.[^.]+$/,'');
+    att.label=nameNoExt||att.fileType;
+    const labelInput=document.querySelector('[data-att-id="'+id+'"]');
+    if(labelInput) labelInput.value=att.label;
+  }
+  // プレビューだけ更新（フォーカスが外れないようrenderAttachmentsは呼ばない）
+  const preview=document.getElementById('attPreview_'+id);
+  if(preview){
+    if(att.fileType==='image'){
+      const r=new FileReader();
+      r.onload=e=>{
+        att.dataUrl=e.target.result;
+        preview.innerHTML='<img src="'+e.target.result+'" style="max-width:100%;border-radius:8px;border:1px solid var(--border);margin-top:6px" onclick="window.open(this.src)">';
+      };
+      r.readAsDataURL(file);
+    }else{
+      const r=new FileReader();
+      r.onload=e=>{att.dataUrl=e.target.result;};
+      r.readAsDataURL(file);
+      preview.innerHTML='<div style="margin-top:6px;font-size:13px;color:var(--green)">✅ '+esc(file.name)+'</div>';
+    }
+  }
 }
 
 /* ════════════ カメラ撮影→PDF機能 ════════════ */
@@ -1041,6 +1093,121 @@ function offerPdfDownload(dataUrl,filename){
     document.body.appendChild(a);a.click();
     document.body.removeChild(a);
   });
+}
+
+/* ════════ 相手方複数管理 ════════ */
+let G_opponents = [];
+
+function addOpponent(){
+  G_opponents.push({
+    id:uid(),type:'individual',name:'',lastName:'',firstName:'',
+    lastNameKana:'',firstNameKana:'',corpName:'',corpRep:'',
+    tel:'',email:'',zip:'',addr:'',contactName:'',
+    lawyerName:'',lawyerOffice:'',lawyerTel:'',lawyerFax:'',
+    lawyerEmail:'',lawyerZip:'',lawyerAddr:''
+  });
+  renderOpponents();
+}
+function removeOpponent(id){
+  G_opponents=G_opponents.filter(o=>o.id!==id);
+  renderOpponents();
+}
+function renderOpponents(){
+  const el=document.getElementById('opponentsWrap');if(!el)return;
+  el.innerHTML=G_opponents.map((opp,i)=>{
+    const isIndiv=opp.type!=='corporate';
+    return`<div style="background:var(--bg);border-radius:12px;padding:12px 14px;margin-bottom:10px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <strong style="font-size:13px">相手方 ${i+1}</strong>
+        <button class="btn btn-sm btn-danger" type="button" onclick="removeOpponent('${opp.id}')">削除</button>
+      </div>
+      <div class="form-row"><div class="form-label-col">種別</div><div class="form-input-col"><div class="radio-row">
+        <label><input type="radio" name="oppType_${opp.id}" value="individual" ${isIndiv?'checked':''} onchange="setOppType('${opp.id}','individual')"> 個人</label>
+        <label><input type="radio" name="oppType_${opp.id}" value="corporate" ${!isIndiv?'checked':''} onchange="setOppType('${opp.id}','corporate')"> 法人</label>
+      </div></div></div>
+      <div id="oppIndiv_${opp.id}" style="display:${isIndiv?'block':'none'}">
+        <div class="form-row"><div class="form-label-col">姓</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.lastName)}" oninput="setOppField('${opp.id}','lastName',this.value);syncOppNameById('${opp.id}')"></div></div>
+        <div class="form-row"><div class="form-label-col">名</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.firstName)}" oninput="setOppField('${opp.id}','firstName',this.value);syncOppNameById('${opp.id}')"></div></div>
+        <div class="form-row"><div class="form-label-col">姓（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.lastNameKana)}" oninput="setOppField('${opp.id}','lastNameKana',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">名（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.firstNameKana)}" oninput="setOppField('${opp.id}','firstNameKana',this.value)"></div></div>
+      </div>
+      <div id="oppCorp_${opp.id}" style="display:${!isIndiv?'block':'none'}">
+        <div class="form-row"><div class="form-label-col">会社名・屋号</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.corpName)}" oninput="setOppField('${opp.id}','corpName',this.value);syncOppNameById('${opp.id}')"></div></div>
+        <div class="form-row"><div class="form-label-col">代表者名</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.corpRep)}" oninput="setOppField('${opp.id}','corpRep',this.value)"></div></div>
+      </div>
+      <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" value="${esc(opp.tel)}" oninput="setOppField('${opp.id}','tel',this.value)"></div></div>
+      <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" value="${esc(opp.email)}" oninput="setOppField('${opp.id}','email',this.value)"></div></div>
+      <div class="form-row"><div class="form-label-col">担当者名</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.contactName)}" oninput="setOppField('${opp.id}','contactName',this.value)"></div></div>
+      <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" value="${esc(opp.zip)}" maxlength="8" style="flex:1" oninput="setOppField('${opp.id}','zip',this.value.replace(/[^0-9]/g,''))"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZipForOpp('${opp.id}')">検索</button></div></div>
+      <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.addr)}" oninput="setOppField('${opp.id}','addr',this.value)"></div></div>
+      <details style="margin-top:4px">
+        <summary style="cursor:pointer;font-size:13px;color:var(--navy2);padding:8px 0">＋ 代理人弁護士</summary>
+        <div class="form-row"><div class="form-label-col">弁護士氏名</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.lawyerName)}" oninput="setOppField('${opp.id}','lawyerName',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">事務所名</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.lawyerOffice)}" oninput="setOppField('${opp.id}','lawyerOffice',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" value="${esc(opp.lawyerTel)}" oninput="setOppField('${opp.id}','lawyerTel',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">FAX番号</div><div class="form-input-col"><input class="fc" type="tel" value="${esc(opp.lawyerFax)}" oninput="setOppField('${opp.id}','lawyerFax',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" value="${esc(opp.lawyerEmail)}" oninput="setOppField('${opp.id}','lawyerEmail',this.value)"></div></div>
+        <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" value="${esc(opp.lawyerZip)}" maxlength="8" style="flex:1" oninput="setOppField('${opp.id}','lawyerZip',this.value.replace(/[^0-9]/g,''))"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZipForLawyer('${opp.id}')">検索</button></div></div>
+        <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" value="${esc(opp.lawyerAddr)}" oninput="setOppField('${opp.id}','lawyerAddr',this.value)"></div></div>
+      </details>
+    </div>`;
+  }).join('');
+}
+function setOppType(id,type){
+  const o=G_opponents.find(x=>x.id===id);if(!o)return;
+  o.type=type;
+  document.getElementById('oppIndiv_'+id).style.display=type==='individual'?'block':'none';
+  document.getElementById('oppCorp_'+id).style.display=type==='corporate'?'block':'none';
+  syncOppNameById(id);
+}
+function setOppField(id,field,value){
+  const o=G_opponents.find(x=>x.id===id);if(o)o[field]=value;
+}
+function syncOppNameById(id){
+  const o=G_opponents.find(x=>x.id===id);if(!o)return;
+  if(o.type==='corporate') o.name=o.corpName||'';
+  else o.name=(o.lastName||'')+(o.firstName||'');
+}
+async function lookupZipForOpp(id){
+  const o=G_opponents.find(x=>x.id===id);if(!o)return;
+  const zip=o.zip.replace(/[^0-9]/g,'');
+  if(zip.length!==7){alert('7桁の郵便番号を入力してください');return;}
+  try{
+    const r=await fetch('https://zipcloud.ibsnet.co.jp/api/search?zipcode='+zip);
+    const j=await r.json();
+    if(j.results?.[0]){const res=j.results[0];o.addr=res.address1+res.address2+res.address3;renderOpponents();}
+    else alert('該当する住所が見つかりませんでした');
+  }catch(e){alert('通信エラーです');}
+}
+async function lookupZipForLawyer(id){
+  const o=G_opponents.find(x=>x.id===id);if(!o)return;
+  const zip=o.lawyerZip.replace(/[^0-9]/g,'');
+  if(zip.length!==7){alert('7桁の郵便番号を入力してください');return;}
+  try{
+    const r=await fetch('https://zipcloud.ibsnet.co.jp/api/search?zipcode='+zip);
+    const j=await r.json();
+    if(j.results?.[0]){const res=j.results[0];o.lawyerAddr=res.address1+res.address2+res.address3;renderOpponents();}
+    else alert('通信エラーです');
+  }catch(e){alert('通信エラーです');}
+}
+
+/* ════════ 顧客チェックボックス検索（iPhone） ════════ */
+function filterCaseClientListM(q){
+  const list=document.getElementById('cs_clientList');
+  if(!list)return;
+  const lq=q.toLowerCase();
+  list.querySelectorAll('label').forEach(label=>{
+    const text=label.textContent.toLowerCase();
+    label.style.display=(!lq||text.includes(lq))?'':'none';
+  });
+}
+
+/* ════════ 案件区分切り替え ════════ */
+function switchCaseCategory(cat){
+  const docSec=document.getElementById('cs_documentSection');
+  const dispSec=document.getElementById('cs_disputeWrapper');
+  if(docSec)docSec.style.display=cat==='document'?'block':'none';
+  if(dispSec)dispSec.style.display=cat==='dispute'?'block':'none';
 }
 
 /* ════════ 相手方種別切り替え ════════ */
@@ -1248,43 +1415,52 @@ function openCaseDetail(id){
   const cl=DB.clients.find(x=>x.id===c.clientId);
   let html=`<div class="detail-wrap"><div class="detail-section"><div class="detail-section-title">案件情報</div>`;
   html+=drow('案件名',`<strong>${esc(c.caseName)}</strong>`);
+  if(c.caseType==='client'){
+    const catLabel=c.caseCategory==='dispute'?'<span class="badge badge-navy">争訟等</span>':'<span class="badge badge-amber">書面作成等</span>';
+    html+=drow('案件区分',catLabel);
+    if(c.overview)html+=drow('案件概要',`<pre style="white-space:pre-wrap;font-size:13px;font-family:inherit;margin:0">${esc(c.overview)}</pre>`);
+    if(c.caseCategory==='document'&&c.requestContent)html+=drow('依頼内容',`<pre style="white-space:pre-wrap;font-size:13px;font-family:inherit;margin:0">${esc(c.requestContent)}</pre>`);
+  }
   html+=drow('種別',c.caseType==='court'?'<span class="badge badge-navy">裁判所案件</span>':'<span class="badge badge-green">顧客案件</span>');
   if(c.caseType==='client'&&cl)html+=drow('顧客（依頼者）',`<span onclick="closeOv();openClientDetail('${cl.id}')" style="color:var(--navy);cursor:pointer">${esc(clientName(cl))} ›</span>`);
   if(c.caseType==='client'){
     html+=drow('委任契約',c.commissionSigned==='yes'?'<span class="badge badge-green">締結済み</span>':'<span class="badge badge-gray">未締結</span>');
-    if(c.opponent?.name){
-    let oppDisp='<strong>'+esc(c.opponent.name)+'</strong>';
-    if(c.opponent.type==='individual'&&(c.opponent.lastNameKana||c.opponent.firstNameKana))
-      oppDisp+=` <span style="font-size:12px;color:var(--text3)">${esc((c.opponent.lastNameKana||'')+(c.opponent.firstNameKana||''))}</span>`;
-    if(c.opponent.type==='corporate'&&c.opponent.corpRep)
-      oppDisp+=` <span style="font-size:12px;color:var(--text3)">（代表: ${esc(c.opponent.corpRep)}）</span>`;
+    const _oppsShow=c.opponents||(c.opponent?.name?[c.opponent]:[]);
+  _oppsShow.forEach((opp_item,opp_i)=>{
+    if(!opp_item?.name)return;
+    const opp_label=_oppsShow.length>1?`相手方${opp_i+1}`:'相手方';
+    let oppDisp='<strong>'+esc(opp_item.name)+'</strong>';
+    if(opp_item.type==='individual'&&(opp_item.lastNameKana||opp_item.firstNameKana))
+      oppDisp+=` <span style="font-size:12px;color:var(--text3)">${esc((opp_item.lastNameKana||'')+(opp_item.firstNameKana||''))}</span>`;
+    if(opp_item.type==='corporate'&&opp_item.corpRep)
+      oppDisp+=` <span style="font-size:12px;color:var(--text3)">（代表: ${esc(opp_item.corpRep)}）</span>`;
     if(c.opponent.contactName)oppDisp+=` / 担当: ${esc(c.opponent.contactName)}`;
-    if(c.opponent.tel)oppDisp+=`<br><a href="tel:${c.opponent.tel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.tel)}</a>${cpBtn(c.opponent.tel)}`;
+    if(opp_item.tel)oppDisp+=`<br><a href="tel:${opp_item.tel}" style="color:inherit;text-decoration:none">☎ ${esc(opp_item.tel)}</a>${cpBtn(opp_item.tel)}`;
     if(c.opponent.email)oppDisp+=`<br><a href="mailto:${esc(c.opponent.email)}" style="color:inherit;text-decoration:none">${esc(c.opponent.email)}</a>${cpBtn(c.opponent.email)}`;
     if(c.opponent.addr)oppDisp+=`<br>${esc(c.opponent.addr)}`;
-    html+=drow('相手方',oppDisp);
-    if(c.opponent.hasLawyer==='yes'){
-      let lwDisp=esc(c.opponent.lawyerName||'');
+    html+=drow(opp_label,oppDisp);
+    if(opp_item.lawyerName){
+      let lwDisp=esc(opp_item.lawyerName||'');
       if(c.opponent.lawyerOffice)lwDisp+=` <span style="font-size:12px;color:var(--text3)">(${esc(c.opponent.lawyerOffice)})</span>`;
-      if(c.opponent.lawyerTel)lwDisp+=`<br><a href="tel:${c.opponent.lawyerTel}" style="color:inherit;text-decoration:none">☎ ${esc(c.opponent.lawyerTel)}</a>${cpBtn(c.opponent.lawyerTel)}`;
+      if(opp_item.lawyerTel)lwDisp+=`<br><a href="tel:${opp_item.lawyerTel}" style="color:inherit;text-decoration:none">☎ ${esc(opp_item.lawyerTel)}</a>${cpBtn(opp_item.lawyerTel)}`;
       if(c.opponent.lawyerFax)lwDisp+=` / FAX: ${esc(c.opponent.lawyerFax)}`;
-      if(c.opponent.lawyerEmail)lwDisp+=`<br><a href="mailto:${esc(c.opponent.lawyerEmail)}" style="color:inherit;text-decoration:none">${esc(c.opponent.lawyerEmail)}</a>`;
+      if(opp_item.lawyerEmail)lwDisp+=`<br><a href="mailto:${esc(opp_item.lawyerEmail)}" style="color:inherit;text-decoration:none">${esc(opp_item.lawyerEmail)}</a>`;
       if(c.opponent.lawyerAddr)lwDisp+=`<br>${esc(c.opponent.lawyerAddr)}`;
-      html+=drow('相手方代理人',lwDisp);
+      html+=drow(opp_label+'代理人',lwDisp);
     }
-  }
+  });
     if(c.trialType)html+=drow('裁判種別',esc(c.trialType));
     if(c.trialCourt)html+=drow('裁判所',`${esc(c.trialCourt)}${c.trialDept?' '+esc(c.trialDept):''}`);
     if(c.trialClerk)html+=drow('書記官',esc(c.trialClerk));
     if(c.trialTel)html+=drow('裁判所TEL',esc(c.trialTel)+(c.trialFax?' / FAX:'+esc(c.trialFax):''));
-    if(c.trialNextDate)html+=drow('次回期日',`<strong>${fmtDT(c.trialNextDate)}</strong> ${dlBadge(c.trialNextDate)}`);
+    if(c.trialNextDate)html+=drow('次回期日',`<strong>${fmtDT(c.trialNextDate)}</strong> ${dlBadge(c.trialNextDate)} <a href="${gcalUrl(c.caseName+' 期日',c.trialNextDate,c.trialCourt||'')}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;font-size:12px">🗓 Gカレ</a>`);
     if(c.trialPrep)html+=drow('準備事項',`<pre style="white-space:pre-wrap;font-size:13px;font-family:inherit;margin:0">${esc(c.trialPrep)}</pre>`);
   }else{
     html+=drow('役割',esc(c.courtRole));
     if(c.trialCourt)html+=drow('裁判所',`${esc(c.trialCourt)}${c.trialDept?' '+esc(c.trialDept):''}`);
     if(c.trialClerk)html+=drow('書記官',esc(c.trialClerk));
     if(c.trialTel)html+=drow('裁判所TEL',esc(c.trialTel)+(c.trialFax?' / FAX:'+esc(c.trialFax):''));
-    if(c.nextDate)html+=drow('次回期日',`<strong>${fmtDT(c.nextDate)}</strong> ${dlBadge(c.nextDate)}`);
+    if(c.nextDate)html+=drow('次回期日',`<strong>${fmtDT(c.nextDate)}</strong> ${dlBadge(c.nextDate)} <a href="${gcalUrl(c.caseName+' 期日',c.nextDate,c.trialCourt||'')}" target="_blank" class="btn btn-sm btn-secondary" style="text-decoration:none;font-size:12px">🗓 Gカレ</a>`);
   }
   if(c.notes)html+=drow('備考',`<pre style="white-space:pre-wrap;font-size:13px;font-family:inherit;margin:0">${esc(c.notes)}</pre>`);
   html+=`</div>`;
@@ -1316,10 +1492,15 @@ function confirmDeleteCase(id){
 function openCaseForm(existing=null,clientId=null){
   const clientOpts=DB.clients.map(c=>`<option value="${c.id}" ${(existing?.clientId||clientId)===c.id?'selected':''}>${esc(clientName(c))}</option>`).join('');
   const isClient=existing?existing.caseType==='client':true;
+  const _caseClientIds=existing?caseClientIds(existing):([]); 
   const oppType=existing?.opponent?.type||'individual';
   const isOppIndiv=oppType==='individual';
   const hl=existing?.opponent?.hasLawyer==='yes';
   const html=`<div class="form-wrap">
+  <div style="background:var(--amber-bg);border:1px solid #e0c060;border-radius:var(--radius2);padding:12px 16px;margin:12px 16px 0;display:flex;align-items:center;justify-content:space-between;gap:12px">
+    <div><div style="font-size:13px;font-weight:600;color:var(--amber)">📝 Obsidianから案件情報を抽出</div><div style="font-size:11px;color:var(--text2);margin-top:2px">メモを貼り付けると、案件名・裁判所・期日などを自動入力</div></div>
+    <button class="btn btn-sm" type="button" style="background:var(--amber);color:#fff;border:none;white-space:nowrap" onclick="openObsidianCaseFormM()">抽出する</button>
+  </div>
   <div class="form-section">
     <div class="form-section-label">案件種別</div>
     <div class="form-row"><div class="radio-row">
@@ -1330,49 +1511,36 @@ function openCaseForm(existing=null,clientId=null){
   <div class="form-section">
     <div class="form-section-label">基本情報</div>
     <div class="form-row"><div class="form-label-col">案件名</div><div class="form-input-col"><input class="fc" type="text" id="cs_name" value="${esc(existing?.caseName||'')}"></div></div>
-    <div class="form-row" id="cs_clientRow" style="display:${isClient?'flex':'none'}"><div class="form-label-col">顧客（依頼者）</div><div class="form-input-col"><select class="fc" id="cs_clientId"><option value="">— 未選択 —</option>${clientOpts}</select></div></div>
+    <div id="cs_clientRow" style="display:${isClient?'block':'none'};padding:12px 16px">
+      <div class="form-label-col" style="margin-bottom:6px">顧客（依頼者）</div>
+      <input type="text" id="cs_clientSearch" placeholder="顧客を検索..." class="fc" style="border:0.5px solid var(--border);border-radius:8px;padding:8px 10px;width:100%;margin-bottom:6px;font-size:14px" oninput="filterCaseClientListM(this.value)">
+      <div id="cs_clientList" style="max-height:130px;overflow-y:auto;border:0.5px solid var(--border);border-radius:8px;background:var(--white)">
+        ${DB.clients.map(cl=>{
+          const checked=_caseClientIds.includes(cl.id);
+          return `<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:0.5px solid var(--border);cursor:pointer;font-size:14px"><input type="checkbox" class="case-client-chk" value="${cl.id}" ${checked?"checked":""} style="width:16px;height:16px;flex-shrink:0"><span>${esc(clientName(cl))}</span></label>`;
+        }).join('')}
+      </div>
+    </div>
     <div class="form-row" id="cs_roleRow" style="display:${!isClient?'flex':'none'}"><div class="form-label-col">役割</div><div class="form-input-col"><select class="fc" id="cs_role">${courtRoles.map(r=>`<option ${existing?.courtRole===r?'selected':''}>${r}</option>`).join('')}</select></div></div>
   </div>
   <div class="form-section" id="cs_clientFields" style="display:${isClient?'block':'none'}">
     <div class="form-section-label">委任契約</div>
     <div class="form-row"><div class="form-label-col">委任契約</div><div class="form-input-col"><select class="fc" id="cs_commission"><option value="no">未締結</option><option value="yes" ${existing?.commissionSigned==='yes'?'selected':''}>締結済み</option></select></div></div>
-  </div>
-  <div class="form-section" id="cs_oppSection" style="display:${isClient?'block':'none'}">
-    <div class="form-section-label">相手方情報</div>
-    <div class="form-row"><div class="form-label-col">相手方種別</div><div class="form-input-col"><div class="radio-row">
-      <label><input type="radio" name="oppType" value="individual" ${isOppIndiv?'checked':''} onchange="switchOppType('individual')"> 個人</label>
-      <label><input type="radio" name="oppType" value="corporate" ${!isOppIndiv?'checked':''} onchange="switchOppType('corporate')"> 法人・個人事業主</label>
+    <div class="form-row"><div class="form-label-col">案件区分</div><div class="form-input-col"><div class="radio-row">
+      <label><input type="radio" name="caseCategory" value="document" ${(!existing?.caseCategory||existing?.caseCategory==='document')?'checked':''} onchange="switchCaseCategory('document')"> 書面作成等</label>
+      <label><input type="radio" name="caseCategory" value="dispute" ${existing?.caseCategory==='dispute'?'checked':''} onchange="switchCaseCategory('dispute')"> 争訟等</label>
     </div></div></div>
-    <div id="opp_indivFields" style="display:${isOppIndiv?'block':'none'}">
-      <div class="form-row"><div class="form-label-col">姓</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppLastName" value="${esc(existing?.opponent?.lastName||(!existing?.opponent?.type||isOppIndiv?existing?.opponent?.name:'')||'')}" oninput="syncOppName()"></div></div>
-      <div class="form-row"><div class="form-label-col">名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppFirstName" value="${esc(existing?.opponent?.firstName||'')}" oninput="syncOppName()"></div></div>
-      <div class="form-row"><div class="form-label-col">姓（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppLastNameKana" value="${esc(existing?.opponent?.lastNameKana||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">名（ふりがな）</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppFirstNameKana" value="${esc(existing?.opponent?.firstNameKana||'')}"></div></div>
-    </div>
-    <div id="opp_corpFields" style="display:${!isOppIndiv?'block':'none'}">
-      <div class="form-row"><div class="form-label-col">会社名・屋号</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppCorpName" value="${esc(existing?.opponent?.corpName||(existing?.opponent?.type==='corporate'?existing?.opponent?.name:'')||'')}" oninput="syncOppName()"></div></div>
-      <div class="form-row"><div class="form-label-col">代表者名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppCorpRep" value="${esc(existing?.opponent?.corpRep||'')}"></div></div>
-    </div>
-    <input type="hidden" id="cs_opp" value="${esc(existing?.opponent?.name||'')}">
-    <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_oppTel" value="${esc(existing?.opponent?.tel||'')}"></div></div>
-    <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" id="cs_oppEmail" value="${esc(existing?.opponent?.email||'')}"></div></div>
-    <div class="form-row"><div class="form-label-col">担当者名</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppContact" value="${esc(existing?.opponent?.contactName||'')}"></div></div>
-    <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" id="cs_oppZip" value="${esc(existing?.opponent?.zip||'')}" maxlength="8" style="flex:1"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZip('cs_oppZip','cs_oppAddr')">検索</button></div></div>
-    <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" id="cs_oppAddr" value="${esc(existing?.opponent?.addr||'')}"></div></div>
+    <div class="form-row" style="align-items:flex-start"><div class="form-label-col">案件概要</div><div class="form-input-col"><textarea class="fc" id="cs_overview" rows="3" placeholder="案件の概要を入力...">${esc(existing?.overview||'')}</textarea></div></div>
   </div>
-  <div class="form-section" id="cs_lawyerSection" style="display:${isClient?'block':'none'}">
-    <button class="opt-toggle" onclick="toggleOpt('csLawyer')" id="csLawyer_toggle">
-      <span id="csLawyer_ic">${hl?'－':'＋'}</span> 相手方代理人を追加
-    </button>
-    <div id="csLawyer_ct" class="opt-content ${hl?'open':''}">
-      <div class="form-row"><div class="form-label-col">弁護士氏名</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerName" value="${esc(existing?.opponent?.lawyerName||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">電話番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerTel" value="${esc(existing?.opponent?.lawyerTel||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">FAX番号</div><div class="form-input-col"><input class="fc" type="tel" id="cs_lawyerFax" value="${esc(existing?.opponent?.lawyerFax||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">メール</div><div class="form-input-col"><input class="fc" type="email" id="cs_lawyerEmail" value="${esc(existing?.opponent?.lawyerEmail||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">事務所名</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerOffice" value="${esc(existing?.opponent?.lawyerOffice||'')}"></div></div>
-      <div class="form-row"><div class="form-label-col">郵便番号</div><div class="form-input-col" style="display:flex;gap:8px;align-items:center"><input class="fc" type="text" id="cs_lawyerZip" value="${esc(existing?.opponent?.lawyerZip||'')}" maxlength="8" style="flex:1"><button class="btn btn-sm btn-secondary" type="button" onclick="lookupZip('cs_lawyerZip','cs_lawyerAddr')">検索</button></div></div>
-      <div class="form-row"><div class="form-label-col">住所</div><div class="form-input-col"><input class="fc" type="text" id="cs_lawyerAddr" value="${esc(existing?.opponent?.lawyerAddr||'')}"></div></div>
-    </div>
+  <div class="form-section" id="cs_documentSection" style="display:${isClient&&(!existing?.caseCategory||existing?.caseCategory==='document')?'block':'none'}">
+    <div class="form-section-label">依頼内容</div>
+    <div class="form-row" style="align-items:flex-start"><div class="form-input-col"><textarea class="fc" id="cs_requestContent" rows="5" placeholder="依頼内容を入力してください...">${esc(existing?.requestContent||'')}</textarea></div></div>
+  </div>
+  <div id="cs_disputeWrapper" style="display:${isClient&&existing?.caseCategory==='dispute'?'block':'none'}">
+  <div class="form-section" id="cs_oppSection" style="display:block">
+    <div class="form-section-label">相手方情報<span style="font-size:11px;color:var(--text3);font-weight:400;margin-left:6px">（複数追加可）</span></div>
+    <div id="opponentsWrap"></div>
+    <button class="opt-toggle" onclick="addOpponent()">＋ 相手方を追加</button>
   </div>
   <div class="form-section">
     <div class="form-section-label">裁判種別・次回期日</div>
@@ -1392,9 +1560,16 @@ function openCaseForm(existing=null,clientId=null){
     <div class="form-section-label">備考・準備事項</div>
     <div class="form-row" style="align-items:flex-start"><div class="form-input-col"><textarea class="fc" id="cs_notes" rows="4">${esc(existing?.notes||'')}</textarea></div></div>
   </div>
+  </div>
   ${existing?`<div style="padding:16px"><button class="btn btn-danger btn-block" onclick="confirmDeleteCase('${existing.id}')">🗑 この案件を削除</button></div>`:''}
   </div>`;
   openOv(existing?'案件編集':'案件登録',html,()=>saveCase(existing?.id));
+  // G_opponents初期化
+  const _opps=existing?.opponents||(existing?.opponent?.name?[{...existing.opponent,id:uid()}]:[]);
+  G_opponents=JSON.parse(JSON.stringify(_opps));
+  // 1件もない場合は空の1件を追加（最初から表示）
+  if(!G_opponents.length) G_opponents=[{id:uid(),type:'individual',name:'',lastName:'',firstName:'',lastNameKana:'',firstNameKana:'',corpName:'',corpRep:'',tel:'',email:'',zip:'',addr:'',contactName:'',lawyerName:'',lawyerOffice:'',lawyerTel:'',lawyerFax:'',lawyerEmail:'',lawyerZip:'',lawyerAddr:''}];
+  setTimeout(()=>renderOpponents(),50);
 }
 function toggleCaseType(type){
   const isClient=type==='client';
@@ -1402,7 +1577,6 @@ function toggleCaseType(type){
   document.getElementById('cs_roleRow').style.display=isClient?'none':'flex';
   document.getElementById('cs_clientFields').style.display=isClient?'block':'none';
   document.getElementById('cs_oppSection').style.display=isClient?'block':'none';
-  document.getElementById('cs_lawyerSection').style.display=isClient?'block':'none';
   document.getElementById('cs_trialTypeRow').style.display=isClient?'flex':'none';
   document.getElementById('cs_trialMethodRow').style.display=isClient?'flex':'none';
 }
@@ -1420,8 +1594,16 @@ function saveCase(existingId=null){
   };
   if(type==='client'){
     syncOppName();
+    const _icat=document.querySelector('input[name="caseCategory"]:checked')?.value||'document';
     Object.assign(c,{
-      clientId:val('cs_clientId'),commissionSigned:val('cs_commission'),
+      caseCategory:_icat,
+      overview:val('cs_overview'),
+      requestContent:_icat==='document'?val('cs_requestContent'):'',
+      clientIds:Array.from(document.querySelectorAll('.case-client-chk:checked')).map(el=>el.value),
+      clientId:Array.from(document.querySelectorAll('.case-client-chk:checked')).map(el=>el.value)[0]||'',
+      commissionSigned:val('cs_commission'),
+      opponents:G_opponents.map(o=>({...o})),
+      opponent:G_opponents[0]||null,
       trialType:val('cs_trialType'),trialMethod:val('cs_trialMethod'),
       trialNextDate:val('cs_nextDate'),
       opponent:{
@@ -1457,10 +1639,13 @@ function renderTodos(el){
   else if(todoSort==='clientKana') sortByKana(todos, t=>{const cs=DB.cases.find(x=>x.id===t.caseId);return cs?DB.clients.find(x=>x.id===cs.clientId)||{}:{};});
   const done=DB.todos.filter(t=>t.done).slice(0,10);
   el.innerHTML=`
-  <div style="padding:8px 16px 4px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" onchange="window._todoSort=this.value;renderTodos(document.getElementById('mainContent'))"><option value="deadline" ${(window._todoSort||'deadline')==='deadline'?'selected':''}>期限順</option><option value="clientKana" ${window._todoSort==='clientKana'?'selected':''}>顧客五十音順</option></select></div>
+  <div style="padding:8px 16px 4px;display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-secondary" style="flex:1;font-size:13px;padding:10px" onclick="openObsidianTodoFormM('global')">📝 Obsidianから抽出</button>
+  </div>
+  <div style="padding:4px 16px 4px;display:flex;align-items:center;gap:8px"><span style="font-size:12px;color:var(--text3);flex-shrink:0">並び順</span><select style="flex:1;background:var(--white);border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:13px" onchange="window._todoSort=this.value;renderTodos(document.getElementById('mainContent'))"><option value="deadline" ${(window._todoSort||'deadline')==='deadline'?'selected':''}>期限順</option><option value="clientKana" ${window._todoSort==='clientKana'?'selected':''}>顧客五十音順</option></select></div>
   <div class="section-header">未完了（${todos.length}件）</div>
   <div class="list-card">
-    ${todos.length?todos.map(t=>{const d=daysUntil(t.deadline);const cls=d===null?'':d<0?'overdue':d<=3?'soon':'ok';return`<div class="todo-item" onclick="openTodoForm(DB.todos.find(x=>x.id==='${t.id}'))"><input type="checkbox" class="todo-check" ${t.done?'checked':''} onchange="event.stopPropagation();toggleTodo('${t.id}')"><div class="todo-info ${t.done?'done':''}"><div class="todo-title">${esc(t.title)}</div><div class="todo-meta">${todoSubLabel(t)}</div>${t.deadline?`<div class="todo-dl ${cls}">${fmtDT(t.deadline)}</div>`:''}</div></div>`;}).join(''):'<div class="empty" style="padding:30px"><div class="empty-icon">✅</div><div>未完了のToDoはありません</div></div>'}
+    ${todos.length?todos.map(t=>{const d=daysUntil(t.deadline);const cls=d===null?'':d<0?'overdue':d<=3?'soon':'ok';return`<div class="todo-item"><input type="checkbox" class="todo-check" ${t.done?'checked':''} onchange="event.stopPropagation();toggleTodo('${t.id}')"><div class="todo-info ${t.done?'done':''}" onclick="openTodoForm(DB.todos.find(x=>x.id==='${t.id}'))"><div class="todo-title">${esc(t.title)}</div><div class="todo-meta">${todoSubLabel(t)}</div>${t.deadline?`<div class="todo-dl ${cls}">${fmtDT(t.deadline)}</div>`:''}</div>${t.deadline?`<a href="${gcalUrl(t.title,t.deadline,todoSubLabel(t).replace(/<[^>]*>/g,''))}" target="_blank" style="font-size:22px;text-decoration:none;flex-shrink:0;padding:0 4px" title="Googleカレンダーに追加">🗓</a>`:''}</div>`;}).join(''):'<div class="empty" style="padding:30px"><div class="empty-icon">✅</div><div>未完了のToDoはありません</div></div>'}
   </div>
   ${done.length?`<div class="section-header">完了済み（直近10件）</div><div class="list-card">${done.map(t=>`<div class="todo-item"><input type="checkbox" class="todo-check" checked onchange="toggleTodo('${t.id}')"><div class="todo-info done"><div class="todo-title">${esc(t.title)}</div><div class="todo-meta">${todoSubLabel(t)}</div></div></div>`).join('')}</div>`:''}
   <div style="height:20px"></div>`;
@@ -1512,6 +1697,31 @@ function confirmDeleteTodo(id){
 }
 
 /* ════════════ 設定 ════════════ */
+function renderHayami(el){
+  const year=new Date().getFullYear();
+  const url='https://www.nenrei-hayami.net/'+year+'.pdf';
+  el.innerHTML=`
+    <div style="padding:12px 16px">
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+        <select style="border:0.5px solid var(--border);border-radius:8px;padding:6px 10px;font-size:14px;background:var(--white)" id="hayamiYear" onchange="updateHayamiYear()">
+          ${Array.from({length:5},(_,i)=>year-1+i).map(y=>`<option value="${y}" ${y===year?'selected':''}>${y}年</option>`).join('')}
+        </select>
+        <a href="${url}" target="_blank" class="btn btn-sm btn-secondary">🔗 別タブで開く</a>
+      </div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:8px">※ PDFが表示されない場合は「別タブで開く」をご利用ください</p>
+      <iframe id="hayamiFrame" src="${url}" style="width:100%;height:calc(100dvh - 220px);border:0.5px solid var(--border);border-radius:10px;background:#fff"></iframe>
+    </div>`;
+}
+function updateHayamiYear(){
+  const year=document.getElementById('hayamiYear')?.value;
+  if(!year)return;
+  const url='https://www.nenrei-hayami.net/'+year+'.pdf';
+  const frame=document.getElementById('hayamiFrame');
+  if(frame)frame.src=url;
+  const link=document.querySelector('a[href*="nenrei-hayami"]');
+  if(link)link.href=url;
+}
+
 function renderSettings(el){
   const savedKey=loadApiKey();
   const maskedKey=savedKey?savedKey.slice(0,16)+'…'+savedKey.slice(-4):'';
@@ -1548,6 +1758,137 @@ function confirmClearAll(){
     DB={clients:[],cases:[],todos:[],tags:[],version:'3.0'};
     saveDB();renderTab('settings');
   });
+}
+
+/* ════════════ Googleカレンダー連携 ════════════ */
+function gcalUrl(title,dateStr,description){
+  description=description||'';
+  if(!dateStr)return'';
+  var dates;
+  if(dateStr.indexOf('T')>=0){
+    var s=dateStr.replace(/[-:]/g,'').replace('T','T')+'00';
+    var d=new Date(dateStr);d.setHours(d.getHours()+1);
+    var e=d.toISOString().replace(/[-:]/g,'').slice(0,15);
+    dates=s+'/'+e;
+  }else{
+    var s2=dateStr.replace(/-/g,'');
+    var d2=new Date(dateStr+'T00:00:00');d2.setDate(d2.getDate()+1);
+    var e2=d2.toISOString().slice(0,10).replace(/-/g,'');
+    dates=s2+'/'+e2;
+  }
+  return'https://calendar.google.com/calendar/render?action=TEMPLATE&text='+encodeURIComponent(title)+'&dates='+dates+'&details='+encodeURIComponent(description);
+}
+
+/* ════════════ Obsidianメモ → 案件情報抽出（iPhone） ════════════ */
+function openObsidianCaseFormM(){
+  var html='<div class="form-wrap">'+
+    '<div class="form-section">'+
+    '<div class="form-section-label">📝 Obsidianメモを貼り付け</div>'+
+    '<div class="form-row" style="align-items:flex-start">'+
+    '<textarea class="fc" id="obsidianCaseTextM" rows="14" placeholder="Obsidianのメモをここにペーストしてください...\n\n例:\n## 田中太郎 不動産契約トラブル\n- 相手方: ABC不動産\n- 次回期日: 2026年7月10日 10:00\n- 裁判所: 東京地方裁判所\n- 準備事項: 契約書の写しを取得"></textarea>'+
+    '</div>'+
+    '<div style="padding:10px 16px"><div id="obsidianCaseStatusM" style="font-size:12px;color:var(--red)"></div></div>'+
+    '</div>'+
+    '<div style="padding:16px">'+
+    '<button class="btn btn-primary btn-block" id="btnObsidianCaseM" onclick="extractCaseFromObsidianM()">\U0001f916 AIで案件情報を抽出する</button>'+
+    '<p style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">APIキーが必要です。設定画面から登録してください。</p>'+
+    '</div>'+
+    '</div>';
+  openOv('Obsidianから案件抽出',html,null);
+}
+async function extractCaseFromObsidianM(){
+  var text=(document.getElementById('obsidianCaseTextM')||{}).value||'';
+  text=text.trim();
+  if(!text){alert('Obsidianのメモを貼り付けてください');return;}
+  var btn=document.getElementById('btnObsidianCaseM');
+  var status=document.getElementById('obsidianCaseStatusM');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 抽出中...';}
+  if(status)status.textContent='';
+  try{
+    var promptText='以下のObsidianメモから法律案件情報を抽出し、以下のキーのJSONのみ返してください（余分なテキスト不要）。存在しない・不明な項目はnull。\n\n'+text+'\n\n{"caseName":"案件名","overview":"案件概要","requestContent":"依頼内容・依頼事項","trialCourt":"裁判所名","trialDept":"担当部・係","trialNextDate":"次回期日(YYYY-MM-DDTまたはYYYY-MM-DDTHH:MM形式)","trialPrep":"次回期日までの準備事項","notes":"備考・その他メモ"}';
+    var data=await callClaudeApi([{role:'user',content:[{type:'text',text:promptText}]}]);
+    var fields={cs_name:data.caseName,cs_overview:data.overview,cs_requestContent:data.requestContent,cs_court:data.trialCourt,cs_dept:data.trialDept,cs_notes:data.trialPrep||(data.notes||'')};
+    Object.keys(fields).forEach(function(k){if(fields[k])setVal(k,fields[k]);});
+    if(data.trialNextDate)setVal('cs_nextDate',data.trialNextDate.length===10?data.trialNextDate+'T00:00':data.trialNextDate);
+    closeOv();
+    alert('案件情報をフォームに反映しました。内容をご確認ください。');
+  }catch(e){
+    if(status)status.textContent='⚠ 失敗: '+e.message;
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='\U0001f916 AIで案件情報を抽出する';}
+  }
+}
+
+/* ════════════ Obsidianメモ → ToDo抽出（iPhone） ════════════ */
+var _obsidianTodoTargetM='global';
+function openObsidianTodoFormM(target){
+  _obsidianTodoTargetM=target||'global';
+  var html='<div class="form-wrap">'+
+    '<div class="form-section">'+
+    '<div class="form-section-label">📝 Obsidianメモを貼り付け</div>'+
+    '<div class="form-row" style="align-items:flex-start">'+
+    '<textarea class="fc" id="obsidianTodoTextM" rows="14" placeholder="Obsidianのメモをここにペーストしてください...\n\n例:\n- [ ] 契約書の確認 → 6/20まで\n- 訴状提出: 7/1締切\n- 証拠書類の整理（6月末まで）"></textarea>'+
+    '</div>'+
+    '<div style="padding:10px 16px"><div id="obsidianTodoStatusM" style="font-size:12px;color:var(--red)"></div></div>'+
+    '</div>'+
+    '<div style="padding:16px">'+
+    '<button class="btn btn-primary btn-block" id="btnObsidianTodoM" onclick="extractTodosFromObsidianM()">\U0001f916 AIでToDoを抽出する</button>'+
+    '<p style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center">APIキーが必要です。設定画面から登録してください。</p>'+
+    '</div>'+
+    '</div>';
+  openOv('ObsidianからToDo抽出',html,null);
+}
+async function extractTodosFromObsidianM(){
+  var text=(document.getElementById('obsidianTodoTextM')||{}).value||'';
+  text=text.trim();
+  if(!text){alert('Obsidianのメモを貼り付けてください');return;}
+  var btn=document.getElementById('btnObsidianTodoM');
+  var status=document.getElementById('obsidianTodoStatusM');
+  if(btn){btn.disabled=true;btn.textContent='⏳ 抽出中...';}
+  if(status)status.textContent='';
+  try{
+    var promptText2='以下のObsidianメモからToDo項目を抽出し、以下のJSON配列形式のみ返してください（余分なテキスト不要）。期限が明記されている場合はYYYY-MM-DDまたはYYYY-MM-DDTHH:MM形式で記載し、不明な場合はnull。\n\n'+text+'\n\n{"todos":[{"title":"タスク内容","deadline":"期限またはnull"}]}';
+    var data=await callClaudeApi([{role:'user',content:[{type:'text',text:promptText2}]}]);
+    var todos=data.todos||[];
+    if(!todos.length){alert('タスクが見つかりませんでした');return;}
+    showObsidianTodoSuggestionsM(todos);
+  }catch(e){
+    if(status)status.textContent='⚠ 失敗: '+e.message;
+  }finally{
+    if(btn){btn.disabled=false;btn.textContent='\U0001f916 AIでToDoを抽出する';}
+  }
+}
+function showObsidianTodoSuggestionsM(todos){
+  var items=todos.map(function(t,i){
+    return'<div style="display:flex;align-items:flex-start;gap:12px;padding:12px 16px;border-bottom:0.5px solid var(--border)">'+
+      '<input type="checkbox" id="obsugi'+i+'" checked style="width:20px;height:20px;accent-color:var(--navy);margin-top:2px;flex-shrink:0">'+
+      '<label for="obsugi'+i+'" style="flex:1;cursor:pointer">'+
+      '<div style="font-size:15px">'+esc(t.title)+'</div>'+
+      '<div style="font-size:12px;color:var(--text3);margin-top:2px">'+(t.deadline?'期限: '+t.deadline:'期限なし')+'</div>'+
+      '</label></div>';
+  }).join('');
+  var escapedTodos=JSON.stringify(todos).replace(/"/g,'&quot;');
+  var sugHtml='<div class="form-wrap"><div class="form-section">'+
+    '<div class="form-section-label">抽出されたToDo（チェックして追加）</div>'+
+    items+
+    '</div>'+
+    '<div style="padding:16px">'+
+    '<button class="btn btn-primary btn-block" onclick="applyObsidianTodosM('+escapedTodos+',this)">選択したToDoを追加</button>'+
+    '</div></div>';
+  // 現在のovContentを入れ替え
+  document.getElementById('ovContent').innerHTML=sugHtml;
+  document.getElementById('ovTitle').textContent='ToDo選択';
+  ovSaveFn=null;
+  document.getElementById('ovSave').style.visibility='hidden';
+}
+async function applyObsidianTodosM(todos,btn){
+  var added=[];
+  todos.forEach(function(t,i){
+    var cb=document.getElementById('obsugi'+i);
+    if(cb&&cb.checked)added.push({id:uid(),title:t.title,deadline:t.deadline||'',caseId:'',done:false});
+  });
+  added.forEach(function(t){DB.todos.push(t);});
+  saveDB();closeOv();renderTab('todos');
 }
 
 /* ─── 初期化 ─── */
