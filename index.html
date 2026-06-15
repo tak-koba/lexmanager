@@ -378,6 +378,11 @@ function fmtDT(d){ if(!d)return'—'; return d.length>10?d.replace('T',' '):d.re
 function esc(s){ return(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
 function val(id){ const e=document.getElementById(id); return e?e.value.trim():''; }
 function setVal(id,v){ const e=document.getElementById(id); if(e)e.value=v||''; }
+function caseClientIds(cs){
+  if(cs.clientIds&&cs.clientIds.length) return cs.clientIds;
+  if(cs.clientId) return [cs.clientId];
+  return [];
+}
 function clientKana(c){
   if(!c)return'';
   if(c.type==='corporate') return c.companyName||'';
@@ -610,7 +615,16 @@ function filterClients(){
     if(!matchTab)return false;
     const nm=(c.type==='corporate'?c.companyName:(c.lastName||'')+(c.firstName||'')).toLowerCase();
     const ph=(c.phones||[]).map(p=>p.number).join('');
-    return(!q||nm.includes(q)||ph.includes(q)||(c.email||'').toLowerCase().includes(q))&&(tf==='all'||c.type===tf);
+    const _clientSearchText=[
+      nm, ph, c.email||'',
+      c.mainAddr||'', c.prevAddr||'', c.hkAddr||'',
+      (c.tags||[]).join(' '),
+      c.notes||'', c.referrer||'', c.referrerAttr||'',
+      c.birthday||'', c.companyName||'', c.representative||'', c.repTitle||'',
+      (c.altContacts||[]).map(a=>[a.name,a.tel,a.email].join(' ')).join(' '),
+      (c.contactPersons||[]).map(p=>[p.name,p.title,p.dept,p.tel,p.email].join(' ')).join(' '),
+    ].join(' ').toLowerCase();
+    return(!q||_clientSearchText.includes(q))&&(tf==='all'||c.type===tf);
   });
   if(sort==='kana') sortByKana(list, c=>c);
   else if(sort==='type') list.sort((a,b)=>a.type.localeCompare(b.type));
@@ -1398,7 +1412,20 @@ function filterCases(){
     const matchTab=tab==='archived'?c.isArchived===true:!c.isArchived;
     if(!matchTab)return false;
     const cl=DB.clients.find(x=>x.id===c.clientId);
-    return(!q||(c.caseName||'').toLowerCase().includes(q)||clientName(cl).toLowerCase().includes(q)||(c.trialCourt||'').toLowerCase().includes(q))&&(tf==='all'||c.caseType===tf);
+    const _oppsText=(c.opponents||[c.opponent]).filter(Boolean).map(o=>[
+      o?.name||'',o?.tel||'',o?.email||'',o?.addr||'',o?.contactName||'',
+      o?.lastNameKana||'',o?.firstNameKana||'',
+      o?.lawyerName||'',o?.lawyerOffice||'',o?.lawyerTel||'',o?.lawyerAddr||''
+    ].join(' ')).join(' ');
+    const _ids=caseClientIds(c);
+    const _clientsText=_ids.map(id=>clientName(DB.clients.find(x=>x.id===id))||'').join(' ');
+    const _caseSearchText=[
+      c.caseName||'', _clientsText, _oppsText,
+      c.trialCourt||'', c.trialDept||'', c.trialClerk||'', c.trialTel||'',
+      c.notes||'', c.overview||'', c.requestContent||'', c.trialPrep||'',
+      (c.minutes||[]).map(m=>m.content||'').join(' '),
+    ].join(' ').toLowerCase();
+    return(!q||_caseSearchText.includes(q))&&(tf==='all'||c.caseType===tf);
   });
   const el=document.getElementById('caseList');if(!el)return;
   if(!list.length){el.innerHTML=`<div class="empty"><div class="empty-icon">📁</div><div>案件が見つかりません</div></div>`;return;}
