@@ -86,6 +86,8 @@ function buildCtx() {
       await refreshData();
       return state.data;
     },
+    // 現在の画面（一覧｜詳細の両ペイン）を描き直す。保存後に一覧側の表示も更新するため。
+    rerender: () => render({ force: true }),
     unsavedGuard: {
       set(checkFn) {
         state.currentUnsavedCheck = checkFn;

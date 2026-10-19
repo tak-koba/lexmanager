@@ -31,6 +31,13 @@ export function sortByKana(list, getKana) {
   });
 }
 
+// 主メール（email）＋追加メール（extraEmails、法人のみ）の一覧。検索用。
+export function clientEmails(client) {
+  if (!client) return [];
+  const extra = (client.extraEmails || []).map((e) => (e && e.address) || '');
+  return [client.email || '', ...extra].filter(Boolean);
+}
+
 export function opponentName(o) {
   if (!o) return '';
   if (o.type === 'corporate') {
@@ -88,6 +95,8 @@ export function defaultClient(type) {
       companyNameKana: '',
       repTitle: '',
       representative: '',
+      repIsContact: false,
+      extraEmails: [],
       mainZip: '',
       mainAddr: '',
       retainerContract: '',

@@ -137,6 +137,27 @@ export function sectionHeader(title, onEdit) {
   return header;
 }
 
+/** 顧客の「個人/法人」チップ。顧問契約ありは黄色（chip-retainer）。 */
+export function clientTypeChip(c) {
+  const retainer = c && c.retainerContract === 'yes';
+  return el('span', { class: ['chip', retainer ? 'chip-retainer' : ''], title: retainer ? '顧問契約あり' : null },
+    c && c.type === 'corporate' ? '法人' : '個人');
+}
+
+/** 詳細画面の一括編集バー。閲覧中は［編集］、編集中は［キャンセル］［保存］。 */
+export function editBar(editMode, { onEdit, onCancel, onSave }) {
+  if (!editMode) {
+    return el('div', { class: 'edit-bar' }, [
+      el('button', { type: 'button', class: 'btn btn-primary', onClick: onEdit }, '編集')
+    ]);
+  }
+  return el('div', { class: 'edit-bar editing' }, [
+    el('span', { class: 'edit-bar-label' }, '編集中'),
+    el('button', { type: 'button', class: 'btn', onClick: onCancel }, 'キャンセル'),
+    el('button', { type: 'button', class: 'btn btn-primary', onClick: onSave }, '保存')
+  ]);
+}
+
 // ---------------- クイック登録ダイアログ ----------------
 
 export function quickCreateClientDialog(ctx) {
@@ -182,6 +203,30 @@ export function quickCreateClientDialog(ctx) {
         kanaAssistPair(companyName, companyNameKana);
         fieldsBox.appendChild(el('label', {}, ['会社名', companyName]));
         fieldsBox.appendChild(el('label', {}, ['かな', companyNameKana]));
+        fieldsBox.appendChild(el('div', { class: 'field-row' }, [
+          el('label', {}, ['代表者役職', el('input', { type: 'text', name: 'repTitle', class: 'field', value: '代表取締役' })]),
+          el('label', {}, ['代表者', el('input', { type: 'text', name: 'representative', class: 'field' })])
+        ]));
+        // 代表者1名で担当者も同じ場合は、担当者の電話・メールを別入力しない（会社の連絡先を共用）。
+        const repIsContact = el('input', { type: 'checkbox', name: 'repIsContact', checked: true });
+        fieldsBox.appendChild(el('label', { class: 'field-row' }, [repIsContact, '代表者が担当者を兼ねる']));
+        const cpBox = el('div', { class: 'field-stack' }, [
+          el('div', { class: 'field-row' }, [
+            el('label', {}, ['担当者氏名', el('input', { type: 'text', name: 'cpName', class: 'field' })]),
+            el('label', {}, ['担当者役職', el('input', { type: 'text', name: 'cpTitle', class: 'field' })])
+          ]),
+          el('div', { class: 'field-row' }, [
+            el('label', {}, ['担当者電話', el('input', { type: 'tel', name: 'cpTel', class: 'field' })]),
+            el('label', {}, ['担当者メール', el('input', { type: 'email', name: 'cpEmail', class: 'field' })])
+          ])
+        ]);
+        const syncCp = () => { cpBox.hidden = repIsContact.checked; };
+        repIsContact.addEventListener('change', syncCp);
+        syncCp();
+        fieldsBox.appendChild(el('label', {}, ['電話番号', el('input', { type: 'tel', name: 'phone', class: 'field' })]));
+        fieldsBox.appendChild(el('label', {}, ['メール', el('input', { type: 'email', name: 'email', class: 'field' })]));
+        fieldsBox.appendChild(cpBox);
+        return;
       }
       fieldsBox.appendChild(el('label', {}, ['電話番号', el('input', { type: 'tel', name: 'phone', class: 'field' })]));
     }
@@ -206,9 +251,20 @@ export function quickCreateClientDialog(ctx) {
             } else {
               rec.companyName = data.get('companyName') || '';
               rec.companyNameKana = data.get('companyNameKana') || '';
+              rec.repTitle = data.get('repTitle') || '';
+              rec.representative = data.get('representative') || '';
+              rec.email = data.get('email') || '';
+              rec.repIsContact = data.get('repIsContact') === 'on';
+              if (!rec.repIsContact) {
+                const cp = {
+                  name: data.get('cpName') || '', title: data.get('cpTitle') || '', dept: '',
+                  tel: data.get('cpTel') || '', email: data.get('cpEmail') || '', homeAddr: ''
+                };
+                if (cp.name || cp.tel || cp.email) rec.contactPersons = [cp];
+              }
             }
             const phone = data.get('phone') || '';
-            if (phone) rec.phones = [{ type: '携帯電話', number: phone }];
+            if (phone) rec.phones = [{ type: type === 'corporate' ? '会社' : '携帯電話', number: phone }];
             rec.registeredAt = todayIso();
             try {
               const created = await ctx.store.create('clients', rec);
@@ -387,7 +443,7 @@ export async function runAiExtractFlow(ctx, payload, fields, onApply) {
 
 const FIELD_LABELS = {
   lastName: '姓', firstName: '名', lastNameKana: 'せい', firstNameKana: 'めい', companyName: '会社名',
-  companyNameKana: '会社名よみ', representative: '代表者', repTitle: '代表者役職', birthday: '生年月日',
+  companyNameKana: '会社名よみ', representative: '代表者', repTitle: '代表者役職', repIsContact: '代表者が担当者を兼任', extraEmails: '追加メール', birthday: '生年月日',
   phones: '電話番号', email: 'メール', mainZip: '郵便番号', mainAddr: '住所', prevZip: '前住所〒', prevAddr: '前住所',
   hkAddr: '本籍', notes: '備考', tags: 'タグ', referrer: '紹介者', referrerAttr: '紹介者属性', envelope: '封筒郵送',
   hoterasu: '法テラス', retainerContract: '顧問契約', retainerDate: '顧問契約日', altContacts: '本人以外の連絡先',

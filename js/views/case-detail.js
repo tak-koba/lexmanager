@@ -7,8 +7,10 @@ import { extractTodoCandidates } from '../util/suggest.js';
 import { openDialog } from '../ui/dialog.js';
 import {
   displayName, opponentName, sortByKana, formatDate, formatDateTime, newId,
-  renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, editTodoDialog, dateTimeInputs, defaultTodo, runAiExtractFlow
+  renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, editTodoDialog, dateTimeInputs, defaultTodo, runAiExtractFlow,
+  editBar
 } from './_shared.js';
+import { confirmDialog } from '../ui/dialog.js';
 
 const TRIAL_TYPES = ['', '調停', '訴訟', '強制執行', 'その他'];
 const TRIAL_METHODS = ['', '出頭', 'ウェブ', '電話'];
@@ -44,6 +46,8 @@ export async function render(container, params, ctx) {
 
 
   const root = el('div', { class: 'detail-root' });
+  // 入力欄でEnterを押してもフォーム送信（ページ再読込）にしない。
+  root.addEventListener('submit', (e) => e.preventDefault());
   container.appendChild(root);
 
   /** セクションの保存。常に保存済みの全体から始め、編集した項目だけを上書きする。 */
@@ -56,26 +60,51 @@ export async function render(container, params, ctx) {
     }
   }
 
+  // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて1回保存する。
+  // ToDo（別レコードへの即時操作）は編集中は表示しない（入力途中の内容が消えるのを防ぐ）。
+  let editMode = false;
+  let collectors = [];
+  ctx.unsavedGuard.set(() => editMode && dirty);
+
   function renderAll() {
     clear(root);
+    collectors = [];
+    root.appendChild(editBar(editMode, {
+      onEdit: () => { editMode = true; setDirty(false); renderAll(); },
+      onCancel: async () => {
+        if (dirty && !(await confirmDialog('編集内容を破棄しますか？'))) return;
+        editMode = false; setDirty(false); renderAll();
+      },
+      onSave: saveAll
+    }));
     root.appendChild(buildHeaderSection());
     if (record.caseType === 'client') root.appendChild(buildOverviewSection());
     else root.appendChild(buildRoleSection());
     root.appendChild(buildTrialSection());
     if (record.caseType === 'client') root.appendChild(buildOpponentsSection());
-    root.appendChild(buildTodoSection());
+    if (!editMode) root.appendChild(buildTodoSection());
     root.appendChild(buildMinutesSection());
     root.appendChild(buildNotesSection());
+  }
+
+  async function saveAll() {
+    const edited = Object.assign({}, ...collectors.map((f) => f()));
+    const saved = await saveRecord(ctx, 'cases', record, { ...record, ...edited });
+    if (saved) {
+      record = saved;
+      editMode = false;
+      setDirty(false);
+      if (ctx.rerender) ctx.rerender(); else renderAll();
+    }
   }
 
   // ---------------- 見出し ----------------
   function buildHeaderSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('基本情報', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('基本情報'));
       section.appendChild(el('h2', {}, record.caseName || '(無題の案件)'));
       const names = (record.clientIds || []).map((cid) => {
         const c = clients.find((x) => x.id === cid);
@@ -106,33 +135,26 @@ export async function render(container, params, ctx) {
       form.appendChild(el('label', {}, ['依頼者（複数選択可）', clientSelect]));
       form.appendChild(el('label', { class: 'field-row' }, [archived, '終了（アーカイブ）']));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          await saveSection({
-            caseName: nameInput.value,
-            clientIds: Array.from(clientSelect.selectedOptions).map((o) => o.value),
-            isArchived: archived.checked
-          });
-        } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('基本情報（編集中）'));
+      collectors.push(() => ({
+        caseName: nameInput.value,
+        clientIds: Array.from(clientSelect.selectedOptions).map((o) => o.value),
+        isArchived: archived.checked
+      }));
+      section.appendChild(sectionHeader('基本情報'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 概要（顧客案件） ----------------
   function buildOverviewSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('概要', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('概要'));
       section.appendChild(el('p', {}, `区分: ${record.caseCategory === 'dispute' ? '争訟等' : '書面作成等'}`));
       section.appendChild(el('p', {}, `委任契約: ${{ yes: '有', no: '無' }[record.commissionSigned] || '未設定'}`));
       if (record.overview) section.appendChild(el('p', {}, `概要: ${record.overview}`));
@@ -169,29 +191,22 @@ export async function render(container, params, ctx) {
       form.appendChild(el('label', {}, ['概要', overview]));
       form.appendChild(el('label', {}, ['依頼内容', requestContent]));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          await saveSection({ caseCategory: category.value, commissionSigned: commission.value, overview: overview.value, requestContent: requestContent.value });
-        } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('概要（編集中）'));
+      collectors.push(() => ({ caseCategory: category.value, commissionSigned: commission.value, overview: overview.value, requestContent: requestContent.value }));
+      section.appendChild(sectionHeader('概要'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 役割（裁判所案件） ----------------
   function buildRoleSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('役割', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('役割'));
       section.appendChild(el('p', {}, `役割: ${record.courtRole || '未設定'}`));
     }
 
@@ -201,26 +216,22 @@ export async function render(container, params, ctx) {
       const role = el('select', { class: 'field' }, COURT_ROLES.map((r) => el('option', { value: r, selected: r === record.courtRole }, r || '未設定')));
       form.appendChild(el('label', {}, ['役割', role]));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => { editing = false; await saveSection({ courtRole: role.value }); } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('役割（編集中）'));
+      collectors.push(() => ({ courtRole: role.value }));
+      section.appendChild(sectionHeader('役割'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 期日・裁判所 ----------------
   function buildTrialSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('期日・裁判所', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('期日・裁判所'));
       const court = [record.trialCourt, record.trialDept].filter(Boolean).join(' ');
       const rows = [
         ['裁判所', court],
@@ -294,37 +305,32 @@ export async function render(container, params, ctx) {
         el('label', {}, ['時刻（任意）', timeInput])
       ]));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          let nextDate = dateInput.value || '';
-          if (nextDate && timeInput.value) nextDate = `${nextDate}T${timeInput.value}`;
-          const edited = { trialCourt: trialCourt.value, trialDept: trialDept.value, trialClerk: trialClerk.value, trialTel: trialTel.value, trialFax: trialFax.value, nextDate };
-          if (record.caseType === 'client') {
-            edited.trialType = trialType.value;
-            edited.trialMethod = trialMethod.value;
-            edited.trialPrep = trialPrep.value;
-          }
-          await saveSection(edited);
-        } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('期日・裁判所（編集中）'));
+      collectors.push(() => {
+        let nextDate = dateInput.value || '';
+        if (nextDate && timeInput.value) nextDate = `${nextDate}T${timeInput.value}`;
+        const edited = { trialCourt: trialCourt.value, trialDept: trialDept.value, trialClerk: trialClerk.value, trialTel: trialTel.value, trialFax: trialFax.value, nextDate };
+        if (record.caseType === 'client') {
+          edited.trialType = trialType.value;
+          edited.trialMethod = trialMethod.value;
+          edited.trialPrep = trialPrep.value;
+        }
+        return edited;
+      });
+      section.appendChild(sectionHeader('期日・裁判所'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 相手方 ----------------
   function buildOpponentsSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('相手方', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('相手方'));
       const list = el('div', { class: 'field-stack' });
       for (const o of record.opponents || []) {
         const box = el('div', { class: 'section-sub' });
@@ -418,15 +424,12 @@ export async function render(container, params, ctx) {
       } }, '＋相手方追加'));
 
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => { editing = false; await saveSection({ opponents }); } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('相手方（編集中）'));
+      collectors.push(() => ({ opponents }));
+      section.appendChild(sectionHeader('相手方'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
@@ -476,11 +479,10 @@ export async function render(container, params, ctx) {
   // ---------------- 議事録 ----------------
   function buildMinutesSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('議事録', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('議事録'));
       const minutes = (record.minutes || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''));
       if (!minutes.length) section.appendChild(el('p', { class: 'text-muted' }, '議事録はありません'));
       for (const m of minutes) {
@@ -563,26 +565,22 @@ export async function render(container, params, ctx) {
         renderBox();
       } }, '＋議事録追加'));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => { editing = false; await saveSection({ minutes }); } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('議事録（編集中）'));
+      collectors.push(() => ({ minutes }));
+      section.appendChild(sectionHeader('議事録'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 備考 ----------------
   function buildNotesSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('備考', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('備考'));
       section.appendChild(el('p', {}, record.notes || ''));
     }
 
@@ -592,15 +590,12 @@ export async function render(container, params, ctx) {
       const notes = el('textarea', { class: 'field', rows: 4 }, record.notes || '');
       form.appendChild(el('label', {}, ['備考', notes]));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => { editing = false; await saveSection({ notes: notes.value }); } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('備考（編集中）'));
+      collectors.push(() => ({ notes: notes.value }));
+      section.appendChild(sectionHeader('備考'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 

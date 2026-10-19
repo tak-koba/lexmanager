@@ -1,8 +1,9 @@
 // LexManager 4 - 顧客一覧
 import { el, clear } from '../ui/dom.js';
-import { displayName, kanaName, sortByKana, quickCreateClientDialog } from './_shared.js';
+import { displayName, kanaName, sortByKana, quickCreateClientDialog, clientTypeChip } from './_shared.js';
+import { clientEmails } from '../model.js';
 
-const persisted = { q: '', typeFilter: 'all', archFilter: 'active', sort: 'kana' };
+const persisted = { q: '', typeFilter: 'all', retainerFilter: 'all', archFilter: 'active', sort: 'kana' };
 
 export async function render(container, params, ctx) {
   clear(container);
@@ -22,6 +23,11 @@ export async function render(container, params, ctx) {
     { value: 'individual', label: '個人' },
     { value: 'corporate', label: '法人' }
   ], state.typeFilter, (v) => { state.typeFilter = v; renderList(); });
+
+  const retainerChips = makeChipGroup(chipRow, [
+    { value: 'all', label: 'ALL' },
+    { value: 'yes', label: '顧問先' }
+  ], state.retainerFilter, (v) => { state.retainerFilter = v; renderList(); });
 
   const archChips = makeChipGroup(chipRow, [
     { value: 'active', label: '進行中' },
@@ -72,6 +78,7 @@ export async function render(container, params, ctx) {
     clear(listBox);
     let filtered = clients.filter((c) => {
       if (state.typeFilter !== 'all' && c.type !== state.typeFilter) return false;
+      if (state.retainerFilter === 'yes' && c.retainerContract !== 'yes') return false;
       if (state.archFilter === 'active' && c.isArchived) return false;
       if (state.archFilter === 'archived' && !c.isArchived) return false;
       return true;
@@ -83,7 +90,7 @@ export async function render(container, params, ctx) {
         const name = displayName(c).toLowerCase();
         const kana = kanaName(c).toLowerCase();
         const company = (c.companyName || '').toLowerCase();
-        const email = (c.email || '').toLowerCase();
+        const email = clientEmails(c).join(' ').toLowerCase();
         const phones = (c.phones || []).map((p) => (p.number || '').replace(/[^0-9]/g, ''));
         const ql = q.toLowerCase();
         if (name.includes(ql) || kana.includes(ql) || company.includes(ql) || email.includes(ql)) return true;
@@ -109,7 +116,7 @@ export async function render(container, params, ctx) {
     for (const c of filtered) {
       const phone = (c.phones && c.phones[0] && c.phones[0].number) || '';
       list.appendChild(el('li', { class: ['list-row', c.id === params.activeId ? 'active' : ''], tabindex: '0', role: 'link', onClick: () => ctx.navigate(`#/clients/${c.id}`), onKeydown: (e) => { if (e.key === 'Enter') ctx.navigate(`#/clients/${c.id}`); } }, [
-        el('span', { class: 'chip' }, c.type === 'corporate' ? '法人' : '個人'),
+        clientTypeChip(c),
         el('span', { class: 'list-row-name' }, displayName(c) || '(名称未設定)'),
         el('span', { class: 'text-muted' }, phone),
         c.isArchived ? el('span', { class: 'chip' }, 'アーカイブ') : null

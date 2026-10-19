@@ -1,6 +1,7 @@
 // LexManager 4 - 全体検索（#/search?q=...）
 import { el, clear } from '../ui/dom.js';
 import { displayName, kanaName, renderDeadlineBadge, opponentName } from './_shared.js';
+import { clientEmails } from '../model.js';
 
 export async function render(container, params, ctx) {
   clear(container);
@@ -44,7 +45,7 @@ export async function render(container, params, ctx) {
       const name = displayName(c).toLowerCase();
       const kana = kanaName(c).toLowerCase();
       const company = (c.companyName || '').toLowerCase();
-      const email = (c.email || '').toLowerCase();
+      const email = clientEmails(c).join(' ').toLowerCase();
       const addr = `${c.mainAddr || ''}${c.prevAddr || ''}`.toLowerCase();
       const notes = (c.notes || '').toLowerCase();
       const phones = (c.phones || []).map((p) => (p.number || '').replace(/[^0-9]/g, ''));

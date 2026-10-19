@@ -6,8 +6,10 @@ import { toWareki, calcAge } from '../util/gengo.js';
 import {
   displayName, kanaName, sortByKana, PHONE_TYPES, formatDate,
   telLink, mailLink, copyButton, addressDisplayRow, zipLookupButton, addressSearchButton,
-  kanaAssistPair, sectionHeader, saveRecord, deleteRecordButton, quickCreateCaseDialog, runAiExtractFlow
+  kanaAssistPair, sectionHeader, saveRecord, deleteRecordButton, quickCreateCaseDialog, runAiExtractFlow,
+  clientTypeChip, editBar
 } from './_shared.js';
+import { confirmDialog } from '../ui/dialog.js';
 
 export async function render(container, params, ctx) {
   clear(container);
@@ -40,6 +42,8 @@ export async function render(container, params, ctx) {
 
 
   const root = el('div', { class: 'detail-root' });
+  // 入力欄でEnterを押してもフォーム送信（ページ再読込）にしない。
+  root.addEventListener('submit', (e) => e.preventDefault());
   container.appendChild(root);
 
   async function reload() {
@@ -60,28 +64,56 @@ export async function render(container, params, ctx) {
     }
   }
 
+  // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて1回保存する。
+  // 関連案件・名刺/添付（即時保存の操作）は編集中は表示しない（入力途中の内容が消えるのを防ぐ）。
+  let editMode = false;
+  let collectors = [];
+  ctx.unsavedGuard.set(() => editMode && dirty);
+
   function renderAll() {
     clear(root);
+    collectors = [];
+    root.appendChild(editBar(editMode, {
+      onEdit: () => { editMode = true; setDirty(false); renderAll(); },
+      onCancel: async () => {
+        if (dirty && !(await confirmDialog('編集内容を破棄しますか？'))) return;
+        editMode = false; setDirty(false); renderAll();
+      },
+      onSave: saveAll
+    }));
     root.appendChild(buildHeaderSection());
     root.appendChild(buildContactSection());
     root.appendChild(buildDetailSection());
-    root.appendChild(buildCasesSection());
-    root.appendChild(buildFilesSection());
+    if (!editMode) {
+      root.appendChild(buildCasesSection());
+      root.appendChild(buildFilesSection());
+    }
     root.appendChild(buildNotesSection());
+  }
+
+  async function saveAll() {
+    const edited = Object.assign({}, ...collectors.map((f) => f()));
+    const saved = await saveRecord(ctx, 'clients', record, { ...record, ...edited });
+    if (saved) {
+      record = saved;
+      editMode = false;
+      setDirty(false);
+      if (ctx.rerender) ctx.rerender(); else renderAll();
+    }
   }
 
   // ---------------- 見出し ----------------
   function buildHeaderSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('基本情報', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('基本情報'));
       section.appendChild(el('h2', {}, displayName(record) || '(名称未設定)'));
       section.appendChild(el('p', { class: 'text-muted' }, kanaName(record)));
       section.appendChild(el('div', { class: 'field-row' }, [
-        el('span', { class: 'chip' }, record.type === 'corporate' ? '法人' : '個人'),
+        clientTypeChip(record),
+        record.retainerContract === 'yes' ? el('span', { class: 'chip chip-retainer' }, '顧問契約') : null,
         record.isArchived ? el('span', { class: 'chip' }, 'アーカイブ') : null,
         ...(record.tags || []).map((t) => el('span', { class: 'chip' }, t))
       ]));
@@ -120,36 +152,28 @@ export async function render(container, params, ctx) {
       form.appendChild(el('label', { class: 'field-row' }, [archived, 'アーカイブ済み']));
 
       form.addEventListener('input', () => setDirty(true));
-
-      const actions = el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          const edited = {};
-          for (const k of Object.keys(fields)) edited[k] = fields[k].value;
-          edited.tags = tagsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-          edited.isArchived = archived.checked;
-          editing = false;
-          await saveSection(edited);
-        } }, '保存')
-      ]);
-      form.appendChild(actions);
-      section.appendChild(sectionHeader('基本情報（編集中）'));
+      collectors.push(() => {
+        const edited = {};
+        for (const k of Object.keys(fields)) edited[k] = fields[k].value;
+        edited.tags = tagsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
+        edited.isArchived = archived.checked;
+        return edited;
+      });
+      section.appendChild(sectionHeader('基本情報'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
-    Object.defineProperty(section, '_refresh', { value: () => (editing ? edit() : view()), configurable: true });
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 連絡先 ----------------
   function buildContactSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('連絡先', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('連絡先'));
       const list = el('div', { class: 'field-stack' });
       for (const p of record.phones || []) {
         list.appendChild(el('div', { class: 'field-row' }, [
@@ -160,6 +184,14 @@ export async function render(container, params, ctx) {
       }
       if (record.email) {
         list.appendChild(el('div', { class: 'field-row' }, [mailLink(record.email), copyButton(ctx, record.email)]));
+      }
+      for (const m of record.extraEmails || []) {
+        if (!m.address) continue;
+        list.appendChild(el('div', { class: 'field-row' }, [
+          m.label ? el('span', { class: 'chip' }, m.label) : null,
+          mailLink(m.address),
+          copyButton(ctx, m.address)
+        ]));
       }
       if (record.mainAddr) {
         list.appendChild(addressDisplayRow(ctx, record.mainZip, record.mainAddr));
@@ -193,38 +225,55 @@ export async function render(container, params, ctx) {
       form.appendChild(el('label', {}, ['電話']));
       form.appendChild(phonesBox);
       form.appendChild(addPhoneBtn);
-      form.appendChild(el('label', {}, ['メール', emailInput]));
+      // 法人は追加メール（用途ラベル付き）を複数持てる。主メールは従来どおり email に保存。
+      const isCorp = record.type === 'corporate';
+      const extraEmails = (record.extraEmails || []).map((m) => ({ ...m }));
+      const emailsBox = el('div', { class: 'field-stack' });
+      function renderEmails() {
+        clear(emailsBox);
+        extraEmails.forEach((m, i) => {
+          const labelI = el('input', { type: 'text', class: 'field', value: m.label || '', placeholder: '用途（例: 経理）' });
+          labelI.addEventListener('input', () => { m.label = labelI.value; });
+          const addrI = el('input', { type: 'email', class: 'field', value: m.address || '', placeholder: 'メール' });
+          addrI.addEventListener('input', () => { m.address = addrI.value; });
+          const delBtn = el('button', { type: 'button', class: 'btn btn-small', onClick: () => { extraEmails.splice(i, 1); renderEmails(); } }, '削除');
+          emailsBox.appendChild(el('div', { class: 'field-row' }, [labelI, addrI, delBtn]));
+        });
+      }
+      form.appendChild(el('label', {}, [isCorp ? 'メール（代表）' : 'メール', emailInput]));
+      if (isCorp) {
+        renderEmails();
+        form.appendChild(emailsBox);
+        form.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: () => { extraEmails.push({ label: '', address: '' }); renderEmails(); } }, '＋メール追加'));
+      }
       form.appendChild(el('label', {}, ['郵便番号', el('div', { class: 'field-row' }, [zipInput, zipLookupButton(ctx, zipInput, addrInput)])]));
       form.appendChild(el('label', {}, ['住所', el('div', { class: 'field-row' }, [addrInput, addressSearchButton(addrInput)])]));
 
       form.addEventListener('input', () => setDirty(true));
+      collectors.push(() => {
+        const edited = { phones: phoneRows, email: emailInput.value, mainZip: zipInput.value, mainAddr: addrInput.value };
+        if (isCorp) edited.extraEmails = extraEmails.filter((m) => (m.address || '').trim());
+        return edited;
+      });
 
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          await saveSection({ phones: phoneRows, email: emailInput.value, mainZip: zipInput.value, mainAddr: addrInput.value });
-        } }, '保存')
-      ]));
-
-      section.appendChild(sectionHeader('連絡先（編集中）'));
+      section.appendChild(sectionHeader('連絡先'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
   // ---------------- 詳細（個人/法人） ----------------
   function buildDetailSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('詳細', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('詳細'));
       const stack = el('div', { class: 'field-stack' });
       if (record.type === 'individual') {
+        if (record.retainerContract) stack.appendChild(el('div', {}, `顧問契約: ${record.retainerContract === 'yes' ? '有' : '無'}${record.retainerDate ? '（' + formatDate(record.retainerDate) + '）' : ''}`));
         if (record.birthday) {
           stack.appendChild(el('div', {}, `生年月日: ${formatDate(record.birthday)}（${toWareki(record.birthday)}／満${calcAge(record.birthday)}歳）`));
         }
@@ -234,6 +283,9 @@ export async function render(container, params, ctx) {
       } else {
         if (record.representative) stack.appendChild(el('div', {}, `代表者: ${record.repTitle || ''} ${record.representative}`));
         if (record.retainerContract) stack.appendChild(el('div', {}, `顧問契約: ${record.retainerContract === 'yes' ? '有' : '無'}${record.retainerDate ? '（' + formatDate(record.retainerDate) + '）' : ''}`));
+        if (record.repIsContact) {
+          stack.appendChild(el('div', {}, `担当者: 代表者${record.representative ? '（' + record.representative + '）' : ''}が兼任 ／ 電話・メールは「連絡先」欄`));
+        }
         for (const p of record.contactPersons || []) {
           stack.appendChild(el('div', { class: 'field-row' }, `担当者: ${p.name || ''} ${p.title || ''} ${p.dept || ''} ${p.tel || ''} ${p.email || ''}`));
         }
@@ -303,17 +355,21 @@ export async function render(container, params, ctx) {
         form.appendChild(el('label', {}, ['前住所', prevAddr]));
         form.appendChild(el('label', {}, ['本籍', hkAddr]));
         form.appendChild(el('label', {}, ['法テラス', hoterasu]));
-        getEdited = () => ({ birthday: birthday.value, prevAddr: prevAddr.value, hkAddr: hkAddr.value, hoterasu: hoterasu.value });
+        const retainerContract = retainerSelect();
+        const retainerDate = el('input', { type: 'date', class: 'field', value: record.retainerDate || '' });
+        form.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['顧問契約', retainerContract]), el('label', {}, ['契約日', retainerDate])]));
+        getEdited = () => ({
+          birthday: birthday.value, prevAddr: prevAddr.value, hkAddr: hkAddr.value, hoterasu: hoterasu.value,
+          retainerContract: retainerContract.value, retainerDate: retainerDate.value
+        });
       } else {
         const repTitle = el('input', { type: 'text', class: 'field', value: record.repTitle || '' });
         const representative = el('input', { type: 'text', class: 'field', value: record.representative || '' });
-        const retainerContract = el('select', { class: 'field' }, [
-          el('option', { value: '', selected: !record.retainerContract }, '未設定'),
-          el('option', { value: 'yes', selected: record.retainerContract === 'yes' }, '有'),
-          el('option', { value: 'no', selected: record.retainerContract === 'no' }, '無')
-        ]);
+        const retainerContract = retainerSelect();
         const retainerDate = el('input', { type: 'date', class: 'field', value: record.retainerDate || '' });
         form.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['役職', repTitle]), el('label', {}, ['代表者', representative])]));
+        const repIsContact = el('input', { type: 'checkbox', checked: !!record.repIsContact });
+        form.appendChild(el('label', { class: 'field-row' }, [repIsContact, '代表者が担当者を兼ねる（担当者の電話・メールは「連絡先」欄を使用）']));
         form.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['顧問契約', retainerContract]), el('label', {}, ['契約日', retainerDate])]));
 
         const contactPersons = (record.contactPersons || []).map((p) => ({ ...p }));
@@ -336,9 +392,16 @@ export async function render(container, params, ctx) {
           });
         }
         renderCp();
-        form.appendChild(el('label', {}, ['担当者']));
-        form.appendChild(cpBox);
-        form.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: () => { contactPersons.push({ name: '', title: '', dept: '', tel: '', email: '', homeAddr: '' }); renderCp(); } }, '＋担当者追加'));
+        // 兼任チェック時は担当者欄を畳む（入力済みの担当者データは消さずに保持する）。
+        const cpWrap = el('div', { class: 'field-stack' }, [
+          el('label', {}, ['担当者（代表者以外）']),
+          cpBox,
+          el('button', { type: 'button', class: 'btn btn-small', onClick: () => { contactPersons.push({ name: '', title: '', dept: '', tel: '', email: '', homeAddr: '' }); renderCp(); } }, '＋担当者追加')
+        ]);
+        const syncCpWrap = () => { cpWrap.hidden = repIsContact.checked && contactPersons.length === 0; };
+        repIsContact.addEventListener('change', syncCpWrap);
+        syncCpWrap();
+        form.appendChild(cpWrap);
 
         const branchOffices = (record.branchOffices || []).map((b) => ({ ...b }));
         const boBox = el('div', { class: 'field-stack' });
@@ -381,6 +444,7 @@ export async function render(container, params, ctx) {
         getEdited = () => ({
           repTitle: repTitle.value,
           representative: representative.value,
+          repIsContact: repIsContact.checked,
           retainerContract: retainerContract.value,
           retainerDate: retainerDate.value,
           contactPersons, branchOffices, relatedCompanies
@@ -388,19 +452,22 @@ export async function render(container, params, ctx) {
       }
 
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          await saveSection(getEdited());
-        } }, '保存')
-      ]));
+      form.addEventListener('change', () => setDirty(true));
+      collectors.push(getEdited);
 
-      section.appendChild(sectionHeader('詳細（編集中）'));
+      section.appendChild(sectionHeader('詳細'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    function retainerSelect() {
+      return el('select', { class: 'field' }, [
+        el('option', { value: '', selected: !record.retainerContract }, '未設定'),
+        el('option', { value: 'yes', selected: record.retainerContract === 'yes' }, '有'),
+        el('option', { value: 'no', selected: record.retainerContract === 'no' }, '無')
+      ]);
+    }
+
+    editMode ? edit() : view();
     return section;
   }
 
@@ -475,11 +542,10 @@ export async function render(container, params, ctx) {
   // ---------------- 備考・紹介者 ----------------
   function buildNotesSection() {
     const section = el('section', { class: 'section' });
-    let editing = false;
 
     function view() {
       clear(section);
-      section.appendChild(sectionHeader('備考・紹介者', () => { editing = true; edit(); }));
+      section.appendChild(sectionHeader('備考・紹介者'));
       section.appendChild(el('p', {}, record.notes || ''));
       section.appendChild(el('p', { class: 'text-muted' }, `紹介者: ${record.referrer || ''} ${record.referrerAttr || ''}`));
       section.appendChild(el('p', { class: 'text-muted' }, `事務所封筒: ${{ ok: '可', ng: '不可', unknown: '不明' }[record.envelope] || ''}`));
@@ -502,18 +568,12 @@ export async function render(container, params, ctx) {
       form.appendChild(el('label', {}, ['紹介者属性', referrerAttr]));
       form.appendChild(el('label', {}, ['事務所封筒郵送', envelope]));
       form.addEventListener('input', () => setDirty(true));
-      form.appendChild(el('div', { class: 'field-row' }, [
-        el('button', { type: 'button', class: 'btn', onClick: () => { editing = false; view(); } }, 'キャンセル'),
-        el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-          editing = false;
-          await saveSection({ notes: notes.value, referrer: referrer.value, referrerAttr: referrerAttr.value, envelope: envelope.value });
-        } }, '保存')
-      ]));
-      section.appendChild(sectionHeader('備考・紹介者（編集中）'));
+      collectors.push(() => ({ notes: notes.value, referrer: referrer.value, referrerAttr: referrerAttr.value, envelope: envelope.value }));
+      section.appendChild(sectionHeader('備考・紹介者'));
       section.appendChild(form);
     }
 
-    editing ? edit() : view();
+    editMode ? edit() : view();
     return section;
   }
 
