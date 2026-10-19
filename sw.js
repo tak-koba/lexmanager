@@ -1,7 +1,7 @@
 // LexManager 4 - service worker (iPhone/GitHub Pages local mode only)
 // app.js decides whether to register this. Never intercepts /api/ requests.
 
-const CACHE_NAME = 'lexmanager-shell-v2';
+const CACHE_NAME = 'lexmanager-shell-v3';
 const APP_SHELL = [
   './',
   './index.html',

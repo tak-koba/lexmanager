@@ -4,13 +4,13 @@
 
 import { el, clear } from '../ui/dom.js';
 import { openDialog, confirmDialog } from '../ui/dialog.js';
-import { deadlineBadge, displayName, kanaName, sortByKana, opponentName, defaultClient, defaultCase, defaultTodo, newId, PHONE_TYPES } from '../model.js';
+import { deadlineBadge, displayName, kanaName, sortByKana, opponentName, defaultClient, defaultCase, defaultTodo, newId, PHONE_TYPES, todoCaseText, todoRequesterText } from '../model.js';
 import { formatDate, formatDateTime, todayIso } from '../ui/dates.js';
 import { lookupZip, googleMapsUrl, addressSearchUrl } from '../util/zip.js';
 import { setupKanaAssist } from '../util/kana.js';
 import { ConflictError } from '../api.js';
 
-export { deadlineBadge, displayName, kanaName, sortByKana, opponentName, defaultClient, defaultCase, defaultTodo, newId, PHONE_TYPES, formatDate, formatDateTime, todayIso };
+export { deadlineBadge, displayName, kanaName, sortByKana, opponentName, defaultClient, defaultCase, defaultTodo, newId, PHONE_TYPES, todoCaseText, todoRequesterText, formatDate, formatDateTime, todayIso };
 
 const BADGE_CLASS = {
   overdue: 'badge-overdue',
@@ -336,14 +336,16 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
   return new Promise((resolve) => {
     const form = el('form', { class: 'quick-form' });
     const titleInput = el('input', { type: 'text', name: 'title', class: 'field', required: true });
-    const deadlineInput = el('input', { type: 'date', name: 'deadline', class: 'field' });
+    const dl = dateTimeInputs('');
     const caseSelect = el('select', { name: 'caseId', class: 'field' }, [
       el('option', { value: '' }, '（個別ToDo）'),
       ...sortByKana((cases || []).slice(), (c) => c.caseName).map((c) => el('option', { value: c.id, selected: c.id === presetCaseId }, c.caseName))
     ]);
+    const requesterInput = el('input', { type: 'text', name: 'requester', class: 'field' });
     form.appendChild(el('label', {}, ['内容', titleInput]));
-    form.appendChild(el('label', {}, ['期限', deadlineInput]));
+    form.appendChild(el('label', {}, ['期限', dl.nodes]));
     form.appendChild(el('label', {}, ['案件', caseSelect]));
+    form.appendChild(el('label', {}, ['依頼者', requesterInput]));
 
     openDialog({
       title: '新規ToDo（クイック登録）',
@@ -356,8 +358,9 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
           onClick: async () => {
             const rec = defaultTodo();
             rec.title = titleInput.value || '';
-            rec.deadline = deadlineInput.value || '';
+            rec.deadline = dl.get();
             rec.caseId = caseSelect.value || '';
+            rec.requester = requesterInput.value.trim();
             if (!rec.title) {
               ctx.toast('内容を入力してください', 'error');
               return 'keep-open';
@@ -553,22 +556,72 @@ export function dateTimeInputs(value) {
   };
 }
 
-/** ToDoの編集ダイアログ（内容・期限・関連案件・メモ・完了・削除）。変更があれば true を返す。 */
-export function editTodoDialog(ctx, todo, cases) {
+/** 案件名（テキスト）に完全一致する案件。紐付け候補の提示用。 */
+export function suggestCase(label, cases) {
+  const s = (label || '').trim();
+  return s ? (cases || []).find((c) => (c.caseName || '').trim() === s) || null : null;
+}
+
+/** 依頼者（テキスト）に一致する顧客（空白を無視して氏名・会社名で完全一致）。紐付け候補の提示用。 */
+export function suggestClient(text, clients) {
+  const s = (text || '').replace(/\s/g, '');
+  return s ? (clients || []).find((c) => displayName(c).replace(/\s/g, '') === s) || null : null;
+}
+
+/** 元メール情報の1行表示（メール由来のToDoのみ）。 */
+export function todoMailLine(todo) {
+  const m = todo && todo.mail;
+  if (!m || !(m.subject || m.from)) return null;
+  const received = m.received ? formatDate(String(m.received).slice(0, 10)) : '';
+  return el('div', { class: 'todo-mail text-muted' }, `✉ ${[m.subject, m.from, received].filter(Boolean).join(' ／ ')}`);
+}
+
+/**
+ * ToDoの編集ダイアログ（内容・期限・案件名と関連案件・依頼者と顧客・メモ・完了・削除）。変更があれば true を返す。
+ * 案件名・依頼者のテキストはアドオン同期用に残し、関連案件・顧客は別に紐付ける（DESIGN.md §3 todo）。
+ */
+export async function editTodoDialog(ctx, todo, cases, clients) {
+  if (!clients) {
+    try { clients = (await ctx.store.all()).clients || []; } catch (e) { clients = []; }
+  }
   return new Promise((resolve) => {
     const title = el('input', { type: 'text', value: todo.title || '', required: true });
     const dl = dateTimeInputs(todo.deadline);
+    const caseLabel = el('input', { type: 'text', value: todo.caseLabel || '', placeholder: '（同期された案件名）' });
     const caseSel = el('select', {}, [
-      el('option', { value: '' }, '（案件なし）'),
+      el('option', { value: '' }, '（紐付けなし）'),
       ...cases.slice().sort((a, b) => (a.caseName || '').localeCompare(b.caseName || '', 'ja'))
         .map((c) => el('option', { value: c.id, selected: c.id === todo.caseId }, c.caseName || '(無題)'))
     ]);
+    const requester = el('input', { type: 'text', value: todo.requester || '', placeholder: '（同期された依頼者）' });
+    const clientSel = el('select', {}, [
+      el('option', { value: '' }, '（紐付けなし）'),
+      ...sortByKana(clients.slice(), kanaName)
+        .map((c) => el('option', { value: c.id, selected: c.id === todo.clientId }, displayName(c) || '(名称未設定)'))
+    ]);
+    // テキストに一致する案件・顧客があり未紐付けなら、ワンクリックで紐付けられるようにする
+    const hint = (input, sel, find, label) => {
+      const box = el('div', { class: 'field-row' });
+      const update = () => {
+        clear(box);
+        const hit = !sel.value && find(input.value);
+        if (hit) box.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: () => { sel.value = hit.id; update(); } }, `「${label(hit)}」に紐付け`));
+      };
+      input.addEventListener('input', update);
+      sel.addEventListener('change', update);
+      update();
+      return box;
+    };
     const notes = el('textarea', { rows: 3 }, todo.notes || '');
     const done = el('input', { type: 'checkbox', checked: !!todo.done });
     const body = el('form', { class: 'quick-form', onSubmit: (e) => e.preventDefault() }, [
       el('label', {}, ['内容', title]),
       el('label', {}, ['期限', dl.nodes]),
-      el('label', {}, ['関連案件', caseSel]),
+      el('div', { class: 'field-row' }, [el('label', {}, ['案件名（テキスト）', caseLabel]), el('label', {}, ['関連案件', caseSel])]),
+      hint(caseLabel, caseSel, (v) => suggestCase(v, cases), (c) => c.caseName),
+      el('div', { class: 'field-row' }, [el('label', {}, ['依頼者（テキスト）', requester]), el('label', {}, ['依頼者の顧客', clientSel])]),
+      hint(requester, clientSel, (v) => suggestClient(v, clients), (c) => displayName(c)),
+      todoMailLine(todo),
       el('label', {}, ['メモ', notes]),
       el('label', {}, [done, '完了'])
     ]);
@@ -598,6 +651,7 @@ export function editTodoDialog(ctx, todo, cases) {
             if (!title.value.trim()) { ctx.toast('内容を入力してください', 'error'); return 'keep-open'; }
             const payload = {
               ...todo, title: title.value.trim(), deadline: dl.get(), caseId: caseSel.value, notes: notes.value,
+              caseLabel: caseLabel.value.trim(), requester: requester.value.trim(), clientId: clientSel.value,
               done: done.checked, doneAt: done.checked ? (todo.doneAt || new Date().toISOString()) : ''
             };
             const saved = await saveRecord(ctx, 'todos', todo, payload);

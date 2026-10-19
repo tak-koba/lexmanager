@@ -71,7 +71,8 @@ export async function render(container, params, ctx) {
     const todoMatches = (all.todos || []).filter((t) => {
       const title = (t.title || '').toLowerCase();
       const notes = (t.notes || '').toLowerCase();
-      return title.includes(ql) || notes.includes(ql);
+      const extra = [t.caseLabel, t.requester, t.mail && t.mail.subject, t.mail && t.mail.from].filter(Boolean).join(' ').toLowerCase();
+      return title.includes(ql) || notes.includes(ql) || extra.includes(ql);
     });
 
     if (!clientMatches.length && !caseMatches.length && !todoMatches.length) {
@@ -106,7 +107,8 @@ export async function render(container, params, ctx) {
       for (const t of todoMatches) {
         list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate(t.caseId ? `#/cases/${t.caseId}` : '#/todos') }, [
           renderDeadlineBadge(t.deadline),
-          el('span', {}, t.title || '(無題)')
+          el('span', {}, t.title || '(無題)'),
+          (t.requester || t.caseLabel) ? el('span', { class: 'text-muted' }, [t.caseLabel, t.requester].filter(Boolean).join(' ／ ')) : null
         ]));
       }
       resultsBox.appendChild(list);

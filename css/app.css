@@ -236,6 +236,26 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .list-row-name { font-weight: 700; flex: 1 1 auto; min-width: 8em; }
 .list-row .text-muted { font-size: 13px; }
 
+/* ToDo表（Thunderbird「要返信orタスク」と同じ列。狭い画面では横スクロール） */
+.todo-table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.todo-table { width: 100%; min-width: 660px; border-collapse: collapse; font-size: 14px; }
+.todo-table th, .todo-table td { padding: 6px 8px; border-top: 1px solid var(--border); text-align: left; vertical-align: top; }
+.todo-table thead th { border-top: 0; background: var(--surface-2); font-size: 12.5px; color: var(--text-2); white-space: nowrap; }
+.todo-th { cursor: pointer; user-select: none; }
+.todo-th:hover { color: var(--text); }
+.todo-col-done { width: 3.5em; text-align: center; }
+.todo-col-deadline { width: 13.5em; }
+.todo-add-row { margin-bottom: 10px; }
+.todo-add-row > input[type="text"] { flex: 1 1 14em; min-width: 10em; }
+.todo-add-row > input[type="date"], .todo-add-row > input[type="time"] { flex: 0 0 auto; width: auto; }
+.todo-col-case, .todo-col-requester { width: 17%; }
+.todo-col-actions { width: 4.5em; }
+.todo-table tr.todo-done td { opacity: .6; }
+.todo-cell-stack { display: flex; flex-direction: column; gap: 4px; }
+.todo-deadline-inputs { display: flex; gap: 4px; }
+.todo-sub, .todo-mail { font-size: 12px; }
+.field.field-compact { min-height: 32px; padding: 4px 8px; font-size: 14px; }
+
 /* チップ・バッジ */
 .chip-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
 .chip-group { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 2px; background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; }

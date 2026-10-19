@@ -164,6 +164,20 @@ export function defaultTodo() {
     deadline: '',
     done: false,
     doneAt: '',
-    notes: ''
+    notes: '',
+    caseLabel: '',
+    requester: '',
+    clientId: ''
   };
+}
+
+// ToDoの案件名・依頼者の表示文字列（紐付け優先、未紐付けならアドオン同期のテキスト）。DESIGN.md §3 todo。
+export function todoCaseText(t, caseById) {
+  const c = t && t.caseId ? caseById.get(t.caseId) : null;
+  return (c && c.caseName) || (t && t.caseLabel) || '';
+}
+
+export function todoRequesterText(t, clientById) {
+  const c = t && t.clientId ? clientById.get(t.clientId) : null;
+  return (c && displayName(c)) || (t && t.requester) || '';
 }
