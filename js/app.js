@@ -112,7 +112,34 @@ const PANES = {
   'case-detail': { list: 'cases', detail: 'case-detail', label: '案件', hash: '#/cases' }
 };
 
-async function renderTwoPane(pane, match, ctx) {
+// 「戻る」の表示名（直前の画面の種類 → 名前）
+const BACK_LABELS = {
+  home: 'ホーム', todos: 'ToDo', clients: '顧客一覧', cases: '案件一覧', 'client-detail': '顧客',
+  'case-detail': '案件', search: '検索結果', tools: 'ツール', settings: '設定'
+};
+
+/**
+ * 詳細画面の戻るボタン。別の画面（ToDo・ホーム・別の詳細等）から来たときは「← ○○に戻る」で直前の画面へ
+ * （ホーム画面に追加したiPhoneアプリにはブラウザの戻るボタンがないため）。同じ一覧から来たときは一覧へのリンク（狭い画面のみ表示）。
+ */
+function buildBackLink(pane, fromHash) {
+  const from = fromHash ? matchRoute(fromHash) : null;
+  if (from && from.view !== pane.list && PANES[from.view] !== pane) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-small back-link back-link-return';
+    btn.textContent = `← ${BACK_LABELS[from.view] || '前の画面'}に戻る`;
+    btn.addEventListener('click', () => history.back());
+    return btn;
+  }
+  const back = document.createElement('a');
+  back.className = 'btn btn-small back-link';
+  back.href = pane.hash;
+  back.textContent = `← ${pane.label}一覧`;
+  return back;
+}
+
+async function renderTwoPane(pane, match, ctx, fromHash) {
   const wrap = document.createElement('div');
   wrap.className = 'two-pane' + (pane.detail ? ' has-detail' : '');
   const left = document.createElement('div');
@@ -125,11 +152,7 @@ async function renderTwoPane(pane, match, ctx) {
   const listMod = await import(`./views/${pane.list}.js`);
   const jobs = [listMod.render(left, { activeId: match.params.id }, ctx)];
   if (pane.detail) {
-    const back = document.createElement('a');
-    back.className = 'btn btn-small back-link';
-    back.href = pane.hash;
-    back.textContent = `← ${pane.label}一覧`;
-    right.appendChild(back);
+    right.appendChild(buildBackLink(pane, fromHash));
     const body = document.createElement('div');
     right.appendChild(body);
     const detailMod = await import(`./views/${pane.detail}.js`);
@@ -163,13 +186,15 @@ async function render({ force = false } = {}) {
   setActiveNav(hash);
 
   const scrollY = hash === lastRenderedHash ? window.scrollY : 0;
+  // 直前の画面（同じ画面の再描画ではそのまま引き継ぐ）。詳細画面の「← ○○に戻る」に使う
+  if (hash !== lastRenderedHash) fromHash = lastRenderedHash;
   lastRenderedHash = hash;
   viewRoot.innerHTML = '';
   try {
     state.currentView = match.view;
     const pane = PANES[match.view];
     if (pane) {
-      await renderTwoPane(pane, match, ctx);
+      await renderTwoPane(pane, match, ctx, fromHash);
     } else {
       const mod = await import(`./views/${match.view}.js`);
       await mod.render(viewRoot, match.params, ctx);
@@ -181,6 +206,7 @@ async function render({ force = false } = {}) {
   }
 }
 let lastRenderedHash = null;
+let fromHash = null;
 
 function wireNav() {
   document.querySelectorAll('.nav-link, .tab-link').forEach((a) => {
@@ -200,6 +226,8 @@ function wireNav() {
 function wireSearch() {
   const input = document.getElementById('globalSearchInput');
   if (!input) return;
+  // タッチ端末（iPhone・iPad等）にはキーボードショートカットの案内を出さない
+  if (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) input.placeholder = '顧客・案件・ToDoを検索';
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       const q = input.value.trim();

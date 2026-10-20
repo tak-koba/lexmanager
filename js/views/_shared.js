@@ -144,11 +144,15 @@ export function clientTypeChip(c) {
     c && c.type === 'corporate' ? '法人' : '個人');
 }
 
-/** 詳細画面の一括編集バー。閲覧中は［編集］、編集中は［キャンセル］［保存］。 */
-export function editBar(editMode, { onEdit, onCancel, onSave }) {
+/**
+ * 詳細画面の一括編集バー。閲覧中は［編集］、編集中は［キャンセル］［保存］。
+ * lead（戻るボタン等）は閲覧中だけ左端に置く（狭い画面で1行にまとめるため）。
+ */
+export function editBar(editMode, { onEdit, onCancel, onSave }, lead) {
   if (!editMode) {
     return el('div', { class: 'edit-bar' }, [
-      el('button', { type: 'button', class: 'btn btn-primary', onClick: onEdit }, '編集')
+      lead || null,
+      el('button', { type: 'button', class: 'btn btn-primary edit-bar-edit', onClick: onEdit }, '編集')
     ]);
   }
   return el('div', { class: 'edit-bar editing' }, [
@@ -576,90 +580,194 @@ export function todoMailLine(todo) {
   return el('div', { class: 'todo-mail text-muted' }, `✉ ${[m.subject, m.from, received].filter(Boolean).join(' ／ ')}`);
 }
 
+// ---------------- ToDo（案件単位の表示・一括編集） ----------------
+// ToDo一覧（案件ごとのまとまり）と案件詳細のToDo欄で共用する。閲覧中は完了チェックだけ即時保存し、
+// それ以外は［編集］→［保存］でまとめて保存する（DESIGN.md §6）。
+
+const TODO_EDIT_KEYS = ['title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes'];
+
+/** 閲覧用のToDo1行。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
+export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged } = {}) {
+  const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
+    try {
+      const res = await ctx.store.update('todos', { ...t, done: cb.checked, doneAt: cb.checked ? new Date().toISOString() : '' }, t);
+      ctx.toast(cb.checked ? '完了にしました' : '未完了に戻しました', 'success');
+      if (onChanged) onChanged(res.record);
+    } catch (e) {
+      cb.checked = !cb.checked;
+      ctx.toast('更新に失敗しました: ' + e.message, 'error');
+    }
+  } });
+  const requester = clientById ? todoRequesterText(t, clientById) : (t.requester || '');
+  const client = t.clientId && clientById ? clientById.get(t.clientId) : null;
+  const caseObj = showCase && t.caseId && caseById ? caseById.get(t.caseId) : null;
+  const caseText = showCase ? (caseObj ? caseObj.caseName : t.caseLabel) : '';
+  const deadline = t.deadline ? (renderDeadlineBadge(t.deadline) || el('span', { class: 'text-muted' }, formatTodoDeadline(t.deadline))) : el('span', { class: 'text-muted' }, '期限なし');
+  return el('div', { class: ['todo-item', t.done ? 'todo-done' : ''] }, [
+    el('div', { class: 'todo-item-check' }, cb),
+    el('div', { class: 'todo-item-deadline' }, deadline),
+    el('div', { class: 'todo-item-requester' }, requester
+      ? (client ? el('a', { href: `#/clients/${client.id}` }, requester) : el('span', {}, requester))
+      : el('span', { class: 'text-muted todo-empty' }, '依頼者なし')),
+    el('div', { class: 'todo-item-body' }, [
+      el('div', { class: 'todo-item-title' }, t.title || '(無題)'),
+      caseText ? el('div', { class: 'todo-sub text-muted' }, caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, `案件: ${caseText}`) : `案件: ${caseText}`) : null,
+      todoMailLine(t),
+      t.notes ? el('div', { class: 'todo-sub text-muted todo-notes' }, `📝 ${t.notes}`) : null
+    ])
+  ]);
+}
+
+function formatTodoDeadline(v) {
+  return v.length > 10 && !v.endsWith('T00:00') ? `${formatDate(v.slice(0, 10))} ${v.slice(11, 16)}` : formatDate(v.slice(0, 10));
+}
+
 /**
- * ToDoの編集ダイアログ（内容・期限・案件名と関連案件・依頼者と顧客・メモ・完了・削除）。変更があれば true を返す。
- * 案件名・依頼者のテキストはアドオン同期用に残し、関連案件・顧客は別に紐付ける（DESIGN.md §3 todo）。
+ * ToDoのまとめて編集。todos を入力欄で並べ、追加・削除もできる。collect() で保存内容
+ * {creates, updates:[{base,payload}], removes:[base], errors:[]} を返す（まだ保存しない）。
+ * fixedCaseId を渡すと案件欄を出さない（案件詳細の中で使う場合）。newDefaults は追加行の初期値。
  */
-export async function editTodoDialog(ctx, todo, cases, clients) {
-  if (!clients) {
-    try { clients = (await ctx.store.all()).clients || []; } catch (e) { clients = []; }
+export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, newDefaults = {} }) {
+  const form = el('form', { class: 'todo-editor', onSubmit: (e) => e.preventDefault() });
+  const listBox = el('div', { class: 'todo-editor-list' });
+  const rows = (todos || []).map((t) => ({ base: t, draft: { ...t }, removed: false }));
+  const sortedCases = sortByKana((cases || []).slice(), (c) => c.caseName);
+  const sortedClients = sortByKana((clients || []).slice(), kanaName);
+
+  function renderRows() {
+    clear(listBox);
+    rows.forEach((r) => listBox.appendChild(renderRow(r)));
+    if (!rows.length) listBox.appendChild(el('p', { class: 'text-muted' }, 'ToDoはありません。［＋ToDoを追加］で追加できます。'));
   }
-  return new Promise((resolve) => {
-    const title = el('input', { type: 'text', value: todo.title || '', required: true });
-    const dl = dateTimeInputs(todo.deadline);
-    const caseLabel = el('input', { type: 'text', value: todo.caseLabel || '', placeholder: '（同期された案件名）' });
-    const caseSel = el('select', {}, [
-      el('option', { value: '' }, '（紐付けなし）'),
-      ...cases.slice().sort((a, b) => (a.caseName || '').localeCompare(b.caseName || '', 'ja'))
-        .map((c) => el('option', { value: c.id, selected: c.id === todo.caseId }, c.caseName || '(無題)'))
-    ]);
-    const requester = el('input', { type: 'text', value: todo.requester || '', placeholder: '（同期された依頼者）' });
-    const clientSel = el('select', {}, [
-      el('option', { value: '' }, '（紐付けなし）'),
-      ...sortByKana(clients.slice(), kanaName)
-        .map((c) => el('option', { value: c.id, selected: c.id === todo.clientId }, displayName(c) || '(名称未設定)'))
-    ]);
-    // テキストに一致する案件・顧客があり未紐付けなら、ワンクリックで紐付けられるようにする
-    const hint = (input, sel, find, label) => {
-      const box = el('div', { class: 'field-row' });
-      const update = () => {
-        clear(box);
-        const hit = !sel.value && find(input.value);
-        if (hit) box.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: () => { sel.value = hit.id; update(); } }, `「${label(hit)}」に紐付け`));
-      };
-      input.addEventListener('input', update);
-      sel.addEventListener('change', update);
-      update();
-      return box;
+
+  function renderRow(r) {
+    const d = r.draft;
+    const bind = (node, key, read = (n) => n.value) => {
+      node.addEventListener('input', () => { d[key] = read(node); });
+      node.addEventListener('change', () => { d[key] = read(node); });
+      return node;
     };
-    const notes = el('textarea', { rows: 3 }, todo.notes || '');
-    const done = el('input', { type: 'checkbox', checked: !!todo.done });
-    const body = el('form', { class: 'quick-form', onSubmit: (e) => e.preventDefault() }, [
-      el('label', {}, ['内容', title]),
-      el('label', {}, ['期限', dl.nodes]),
-      el('div', { class: 'field-row' }, [el('label', {}, ['案件名（テキスト）', caseLabel]), el('label', {}, ['関連案件', caseSel])]),
-      hint(caseLabel, caseSel, (v) => suggestCase(v, cases), (c) => c.caseName),
-      el('div', { class: 'field-row' }, [el('label', {}, ['依頼者（テキスト）', requester]), el('label', {}, ['依頼者の顧客', clientSel])]),
-      hint(requester, clientSel, (v) => suggestClient(v, clients), (c) => displayName(c)),
-      todoMailLine(todo),
-      el('label', {}, ['メモ', notes]),
-      el('label', {}, [done, '完了'])
+    const done = bind(el('input', { type: 'checkbox', checked: !!d.done, 'aria-label': '完了' }), 'done', (n) => n.checked);
+    const title = bind(el('input', { type: 'text', class: 'field', value: d.title || '', placeholder: '依頼内容・要対応事項' }), 'title');
+    const v = d.deadline || '';
+    const date = el('input', { type: 'date', class: 'field', value: v.slice(0, 10), 'aria-label': '期限' });
+    const time = el('input', { type: 'time', class: 'field', step: 300, value: v.length > 10 && !v.endsWith('T00:00') ? v.slice(11, 16) : '', 'aria-label': '時刻（任意）' });
+    const syncDeadline = () => { d.deadline = date.value ? (time.value ? `${date.value}T${time.value}` : date.value) : ''; };
+    for (const n of [date, time]) { n.addEventListener('input', syncDeadline); n.addEventListener('change', syncDeadline); }
+    const requester = bind(el('input', { type: 'text', class: 'field', value: d.requester || '', placeholder: '依頼者' }), 'requester');
+    const clientSel = bind(el('select', { class: 'field', 'aria-label': '依頼者の顧客' }, [
+      el('option', { value: '' }, '顧客と紐付けない'),
+      ...sortedClients.map((c) => el('option', { value: c.id, selected: c.id === d.clientId }, displayName(c) || '(名称未設定)'))
+    ]), 'clientId');
+    const notes = bind(el('textarea', { class: 'field', rows: 1, placeholder: 'メモ' }, d.notes || ''), 'notes');
+
+    const fields = [
+      el('label', { class: 'todo-ed-title' }, ['内容', title]),
+      el('div', { class: 'todo-ed-deadline' }, [el('span', { class: 'todo-ed-label' }, '期限'), el('div', { class: 'todo-deadline-inputs' }, [date, time])]),
+      el('label', { class: 'todo-ed-requester' }, ['依頼者', requester]),
+      el('label', { class: 'todo-ed-client' }, ['依頼者の顧客', clientSel]),
+      linkHint(requester, clientSel, (s) => suggestClient(s, clients), (c) => displayName(c))
+    ];
+    if (!fixedCaseId) {
+      const caseLabel = bind(el('input', { type: 'text', class: 'field', value: d.caseLabel || '', placeholder: '案件名（テキスト）' }), 'caseLabel');
+      const caseSel = bind(el('select', { class: 'field', 'aria-label': '関連案件' }, [
+        el('option', { value: '' }, '案件と紐付けない'),
+        ...sortedCases.map((c) => el('option', { value: c.id, selected: c.id === d.caseId }, c.caseName || '(無題)'))
+      ]), 'caseId');
+      fields.push(
+        el('label', { class: 'todo-ed-caselabel' }, ['案件名', caseLabel]),
+        el('label', { class: 'todo-ed-case' }, ['関連案件', caseSel]),
+        linkHint(caseLabel, caseSel, (s) => suggestCase(s, cases), (c) => c.caseName)
+      );
+    }
+    fields.push(el('label', { class: 'todo-ed-notes' }, ['メモ', notes]), todoMailLine(r.base || {}));
+
+    const delBtn = el('button', { type: 'button', class: 'btn btn-small', onClick: () => {
+      if (!r.base) { rows.splice(rows.indexOf(r), 1); renderRows(); return; }
+      r.removed = !r.removed;
+      renderRows();
+    } }, r.removed ? '元に戻す' : '削除');
+
+    return el('div', { class: ['todo-ed-row', r.removed ? 'todo-ed-removed' : '', r.base ? '' : 'todo-ed-new'] }, [
+      el('div', { class: 'todo-ed-head' }, [
+        el('label', { class: 'todo-ed-done' }, [done, '完了']),
+        r.base ? null : el('span', { class: 'chip' }, '新規'),
+        r.removed ? el('span', { class: 'chip' }, '保存すると削除') : null,
+        delBtn
+      ]),
+      el('fieldset', { class: 'todo-ed-fields', disabled: r.removed }, fields)
     ]);
-    openDialog({
-      title: 'ToDoの編集',
-      bodyNode: body,
-      onClose: () => resolve(false),
-      actions: [
-        {
-          label: '削除', danger: true,
-          onClick: async () => {
-            if (!(await ctx.confirm(`ToDo「${todo.title || ''}」を削除しますか？`))) return 'keep-open';
-            try {
-              await ctx.store.remove('todos', todo);
-              ctx.toast('削除しました', 'success');
-              resolve(true);
-            } catch (e) {
-              ctx.toast('削除できませんでした: ' + e.message, 'error');
-              return 'keep-open';
-            }
-          }
-        },
-        { label: 'キャンセル', onClick: () => resolve(false) },
-        {
-          label: '保存', primary: true,
-          onClick: async () => {
-            if (!title.value.trim()) { ctx.toast('内容を入力してください', 'error'); return 'keep-open'; }
-            const payload = {
-              ...todo, title: title.value.trim(), deadline: dl.get(), caseId: caseSel.value, notes: notes.value,
-              caseLabel: caseLabel.value.trim(), requester: requester.value.trim(), clientId: clientSel.value,
-              done: done.checked, doneAt: done.checked ? (todo.doneAt || new Date().toISOString()) : ''
-            };
-            const saved = await saveRecord(ctx, 'todos', todo, payload);
-            if (!saved) return 'keep-open';
-            resolve(true);
-          }
-        }
-      ]
-    });
-  });
+  }
+
+  // テキストに一致する案件・顧客があり未紐付けなら、ワンクリックで紐付けるボタンを出す
+  function linkHint(input, sel, find, label) {
+    const box = el('div', { class: 'todo-ed-hint' });
+    const update = () => {
+      clear(box);
+      const hit = !sel.value && find(input.value);
+      if (hit) box.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: () => {
+        sel.value = hit.id;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        update();
+      } }, `🔗「${label(hit)}」に紐付け`));
+    };
+    input.addEventListener('input', update);
+    sel.addEventListener('change', update);
+    update();
+    return box;
+  }
+
+  const addBtn = el('button', { type: 'button', class: 'btn btn-small', onClick: () => {
+    rows.push({ base: null, draft: { ...defaultTodo(), ...newDefaults, ...(fixedCaseId ? { caseId: fixedCaseId } : {}) }, removed: false });
+    renderRows();
+    const inputs = listBox.querySelectorAll('.todo-ed-new .todo-ed-title input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  } }, '＋ToDoを追加');
+
+  renderRows();
+  form.appendChild(listBox);
+  form.appendChild(addBtn);
+
+  function collect() {
+    const plan = { creates: [], updates: [], removes: [], errors: [] };
+    for (const r of rows) {
+      const d = { ...r.draft, title: (r.draft.title || '').trim(), requester: (r.draft.requester || '').trim(), caseLabel: (r.draft.caseLabel || '').trim() };
+      if (!r.base) {
+        if (d.title) plan.creates.push({ ...d, doneAt: d.done ? new Date().toISOString() : '' });
+        continue;
+      }
+      if (r.removed) { plan.removes.push(r.base); continue; }
+      if (!d.title) { plan.errors.push('内容が空のToDoがあります'); continue; }
+      const changed = TODO_EDIT_KEYS.some((k) => (d[k] ?? '') !== (r.base[k] ?? ''));
+      if (!changed) continue;
+      if (!!d.done !== !!r.base.done) d.doneAt = d.done ? new Date().toISOString() : '';
+      plan.updates.push({ base: r.base, payload: d });
+    }
+    return plan;
+  }
+
+  return { node: form, collect };
+}
+
+/** todoGroupEditor の collect() 結果を保存する。保存できた件数と失敗件数を返す（トーストは呼び出し側）。 */
+export async function commitTodoPlan(ctx, plan) {
+  let ok = 0;
+  let failed = 0;
+  for (const rec of plan.creates) {
+    try { await ctx.store.create('todos', rec); ok++; } catch (e) { failed++; }
+  }
+  for (const { base, payload } of plan.updates) {
+    try {
+      await ctx.store.update('todos', payload, base);
+      ok++;
+    } catch (e) {
+      // 他の端末と同じToDoを同時に変えていた場合は、項目ごとに選ぶ画面を出す
+      if (e instanceof ConflictError && await saveRecord(ctx, 'todos', base, payload)) ok++;
+      else failed++;
+    }
+  }
+  for (const base of plan.removes) {
+    try { await ctx.store.remove('todos', base); ok++; } catch (e) { failed++; }
+  }
+  return { ok, failed };
 }

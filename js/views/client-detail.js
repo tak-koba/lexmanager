@@ -68,6 +68,8 @@ export async function render(container, params, ctx) {
   // 関連案件・名刺/添付（即時保存の操作）は編集中は表示しない（入力途中の内容が消えるのを防ぐ）。
   let editMode = false;
   let collectors = [];
+  // 一覧枠の戻るボタンを編集バーの左端へ移す（1行にまとめる）
+  const backLink = container.parentElement && container.parentElement.querySelector(':scope > .back-link');
   ctx.unsavedGuard.set(() => editMode && dirty);
 
   function renderAll() {
@@ -80,7 +82,7 @@ export async function render(container, params, ctx) {
         editMode = false; setDirty(false); renderAll();
       },
       onSave: saveAll
-    }));
+    }, backLink));
     root.appendChild(buildHeaderSection());
     root.appendChild(buildContactSection());
     root.appendChild(buildDetailSection());
@@ -515,9 +517,9 @@ export async function render(container, params, ctx) {
         ctx.toast('アップロードに失敗しました: ' + e.message, 'error');
       }
     });
-    section.appendChild(el('label', {}, ['名刺']));
+    section.appendChild(el('div', { class: 'section-sub' }, '名刺'));
     section.appendChild(cardsBox);
-    section.appendChild(cardInput);
+    section.appendChild(el('label', { class: 'btn btn-small file-btn' }, [cardInput, '＋名刺を追加']));
 
     const attachBox = el('div', { class: 'field-stack' });
     for (const ref of record.attachments || []) attachBox.appendChild(fileRow('attachments', ref));
@@ -532,9 +534,9 @@ export async function render(container, params, ctx) {
         ctx.toast('アップロードに失敗しました: ' + e.message, 'error');
       }
     });
-    section.appendChild(el('label', {}, ['添付（登記情報・住民票・免許証等）']));
+    section.appendChild(el('div', { class: 'section-sub' }, '添付（登記情報・住民票・免許証等）'));
     section.appendChild(attachBox);
-    section.appendChild(attachInput);
+    section.appendChild(el('label', { class: 'btn btn-small file-btn' }, [attachInput, '＋ファイルを添付']));
 
     return section;
   }

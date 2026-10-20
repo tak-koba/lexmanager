@@ -7,7 +7,8 @@ import { extractTodoCandidates } from '../util/suggest.js';
 import { openDialog } from '../ui/dialog.js';
 import {
   displayName, opponentName, sortByKana, formatDate, formatDateTime, newId,
-  renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, editTodoDialog, dateTimeInputs, defaultTodo, runAiExtractFlow,
+  renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, dateTimeInputs, defaultTodo, runAiExtractFlow,
+  todoViewRow, todoGroupEditor, commitTodoPlan,
   editBar
 } from './_shared.js';
 import { confirmDialog } from '../ui/dialog.js';
@@ -60,10 +61,13 @@ export async function render(container, params, ctx) {
     }
   }
 
-  // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて1回保存する。
-  // ToDo（別レコードへの即時操作）は編集中は表示しない（入力途中の内容が消えるのを防ぐ）。
+  // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて保存する。
+  // ToDoも一緒に編集し、案件の保存に成功したあとでToDoの変更を保存する。
   let editMode = false;
   let collectors = [];
+  let todoEditor = null;
+  // 一覧枠の戻るボタンを編集バーの左端へ移す（1行にまとめる）
+  const backLink = container.parentElement && container.parentElement.querySelector(':scope > .back-link');
   ctx.unsavedGuard.set(() => editMode && dirty);
 
   function renderAll() {
@@ -76,26 +80,32 @@ export async function render(container, params, ctx) {
         editMode = false; setDirty(false); renderAll();
       },
       onSave: saveAll
-    }));
+    }, backLink));
     root.appendChild(buildHeaderSection());
     if (record.caseType === 'client') root.appendChild(buildOverviewSection());
     else root.appendChild(buildRoleSection());
     root.appendChild(buildTrialSection());
     if (record.caseType === 'client') root.appendChild(buildOpponentsSection());
-    if (!editMode) root.appendChild(buildTodoSection());
+    todoEditor = null;
+    root.appendChild(buildTodoSection());
     root.appendChild(buildMinutesSection());
     root.appendChild(buildNotesSection());
   }
 
   async function saveAll() {
+    const plan = todoEditor ? todoEditor.collect() : null;
+    if (plan && plan.errors.length) { ctx.toast(plan.errors[0], 'error'); return; }
     const edited = Object.assign({}, ...collectors.map((f) => f()));
     const saved = await saveRecord(ctx, 'cases', record, { ...record, ...edited });
-    if (saved) {
-      record = saved;
-      editMode = false;
-      setDirty(false);
-      if (ctx.rerender) ctx.rerender(); else renderAll();
+    if (!saved) return;
+    record = saved;
+    if (plan && plan.creates.length + plan.updates.length + plan.removes.length) {
+      const { failed } = await commitTodoPlan(ctx, plan);
+      if (failed) ctx.toast(`ToDo ${failed}件を保存できませんでした`, 'error');
     }
+    editMode = false;
+    setDirty(false);
+    if (ctx.rerender) ctx.rerender(); else renderAll();
   }
 
   // ---------------- 見出し ----------------
@@ -434,27 +444,26 @@ export async function render(container, params, ctx) {
   }
 
   // ---------------- ToDo ----------------
+  // 閲覧中は完了チェックと追加だけ即時保存。編集中は案件と一緒にまとめて編集し、［保存］で案件の後に保存する。
   function buildTodoSection() {
     const section = el('section', { class: 'section' });
     section.appendChild(sectionHeader('ToDo'));
-    const todos = (all.todos || []).filter((t) => t.caseId === record.id);
-    const list = el('ul', { class: 'list' });
+    const todos = (all.todos || []).filter((t) => t.caseId === record.id)
+      .sort((a, b) => (a.done - b.done) || (a.deadline || '9999').localeCompare(b.deadline || '9999'));
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+
+    if (editMode) {
+      todoEditor = todoGroupEditor({ todos, cases: all.cases || [], clients, fixedCaseId: record.id });
+      todoEditor.node.addEventListener('input', () => setDirty(true));
+      todoEditor.node.addEventListener('change', () => setDirty(true));
+      todoEditor.node.addEventListener('click', (e) => { if (e.target.closest('button')) setDirty(true); });
+      section.appendChild(todoEditor.node);
+      return section;
+    }
+
+    const list = el('div', { class: 'todo-items' });
     for (const t of todos) {
-      const cb = el('input', { type: 'checkbox', checked: !!t.done, onChange: async () => {
-        try {
-          const fresh = await ctx.store.all();
-          const cur = (fresh.todos || []).find((x) => x.id === t.id) || t;
-          await ctx.store.update('todos', { ...cur, done: cb.checked, doneAt: cb.checked ? new Date().toISOString() : '' }, cur);
-          ctx.toast('更新しました', 'success');
-          render(container, params, ctx);
-        } catch (e) {
-          ctx.toast('更新に失敗しました: ' + e.message, 'error');
-        }
-      } });
-      list.appendChild(el('li', { class: 'list-row' }, [cb, renderDeadlineBadge(t.deadline),
-        el('button', { type: 'button', class: 'list-row-name linklike', onClick: async () => {
-          if (await editTodoDialog(ctx, t, all.cases || [])) render(container, params, ctx);
-        } }, t.title || '(無題)')]));
+      list.appendChild(todoViewRow(ctx, t, { clientById, onChanged: () => render(container, params, ctx) }));
     }
     section.appendChild(list);
     if (!todos.length) section.appendChild(el('p', { class: 'text-muted' }, 'ToDoはありません'));
