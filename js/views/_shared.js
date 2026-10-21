@@ -347,7 +347,8 @@ export function quickCreateCaseDialog(ctx, clients) {
 export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
   return new Promise((resolve) => {
     const form = el('form', { class: 'quick-form' });
-    const titleInput = el('input', { type: 'text', name: 'title', class: 'field', required: true });
+    const taskInput = el('input', { type: 'text', name: 'task', class: 'field', placeholder: 'やるべきことを簡潔に' });
+    const titleInput = el('textarea', { name: 'title', class: 'field', rows: 3, placeholder: '詳細（任意）' });
     const dl = dateTimeInputs('');
     const caseSelect = el('select', { name: 'caseId', class: 'field' }, [
       el('option', { value: '' }, '（個別ToDo）'),
@@ -355,7 +356,8 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
     ]);
     const requesterInput = el('input', { type: 'text', name: 'requester', class: 'field' });
     const calendarInput = el('input', { type: 'checkbox', name: 'calendar' });
-    form.appendChild(el('label', {}, ['内容', titleInput]));
+    form.appendChild(el('label', {}, ['タスク', taskInput]));
+    form.appendChild(el('label', {}, ['詳細', titleInput]));
     form.appendChild(el('label', {}, ['期限', dl.nodes]));
     form.appendChild(el('label', {}, ['案件', caseSelect]));
     form.appendChild(el('label', {}, ['依頼者', requesterInput]));
@@ -371,13 +373,14 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
           primary: true,
           onClick: async () => {
             const rec = defaultTodo();
-            rec.title = titleInput.value || '';
+            rec.task = taskInput.value.trim();
+            rec.title = titleInput.value.trim();
             rec.deadline = dl.get();
             rec.caseId = caseSelect.value || '';
             rec.requester = requesterInput.value.trim();
             rec.calendar = calendarInput.checked;
-            if (!rec.title) {
-              ctx.toast('内容を入力してください', 'error');
+            if (!rec.task && !rec.title) {
+              ctx.toast('タスクを入力してください', 'error');
               return 'keep-open';
             }
             try {
@@ -470,7 +473,7 @@ const FIELD_LABELS = {
   overview: '概要', requestContent: '依頼内容', commissionSigned: '委任契約', opponents: '相手方', trialType: '裁判種別',
   trialMethod: '期日方法', trialPrep: '準備事項', courtRole: '役割', trialCourt: '裁判所', trialDept: '担当部',
   trialClerk: '書記官', trialTel: '裁判所電話', trialFax: '裁判所FAX', nextDate: '次回期日', minutes: '議事録',
-  title: '内容', deadline: '期限', done: '完了', caseId: '関連案件'
+  task: 'タスク', title: '詳細', deadline: '期限', done: '完了', caseId: '関連案件'
 };
 
 function showValue(v) {
@@ -595,9 +598,14 @@ export function todoMailLine(todo) {
 // ToDo一覧（案件ごとのまとまり）と案件詳細のToDo欄で共用する。閲覧中は完了チェックだけ即時保存し、
 // それ以外は［編集］→［保存］でまとめて保存する（DESIGN.md §6）。
 
-const TODO_EDIT_KEYS = ['title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes', 'calendar'];
+const TODO_EDIT_KEYS = ['task', 'title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes', 'calendar'];
 
-/** 閲覧用のToDo1行。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
+/** ToDoの見出し: タスク（なければ詳細の1行目）。 */
+export function todoTaskText(t) {
+  return (t.task || '').trim() || String(t.title || '').split(/\r?\n/).find((s) => s.trim()) || '(無題)';
+}
+
+/** 閲覧用のToDo1行（タスクを太字、詳細をその下に）。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
 export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged, onEdit, editDisabled = false } = {}) {
   const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
     try {
@@ -621,7 +629,8 @@ export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, on
       ? (client ? el('a', { href: `#/clients/${client.id}` }, requester) : el('span', {}, requester))
       : el('span', { class: 'text-muted todo-empty' }, '依頼者なし')),
     el('div', { class: 'todo-item-body' }, [
-      el('div', { class: 'todo-item-title' }, [t.calendar ? el('span', { class: 'todo-cal', title: 'Googleカレンダーに登録' }, '📅 ') : null, t.title || '(無題)']),
+      el('div', { class: 'todo-item-title' }, [t.calendar ? el('span', { class: 'todo-cal', title: 'Googleカレンダーに登録' }, '📅 ') : null, todoTaskText(t)]),
+      t.task && t.title && t.title.trim() !== t.task.trim() ? el('div', { class: 'todo-item-detail text-muted' }, t.title) : null,
       caseText ? el('div', { class: 'todo-sub text-muted' }, caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, `案件: ${caseText}`) : `案件: ${caseText}`) : null,
       todoMailLine(t),
       t.notes ? el('div', { class: 'todo-sub text-muted todo-notes' }, `📝 ${t.notes}`) : null
@@ -661,7 +670,10 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
     };
     const done = bind(el('input', { type: 'checkbox', checked: !!d.done, 'aria-label': '完了' }), 'done', (n) => n.checked);
     const calendar = bind(el('input', { type: 'checkbox', checked: !!d.calendar, 'aria-label': 'カレンダー登録' }), 'calendar', (n) => n.checked);
-    const title = bind(el('input', { type: 'text', class: 'field', value: d.title || '', placeholder: '依頼内容・要対応事項' }), 'title');
+    const task = bind(el('input', { type: 'text', class: 'field', value: d.task || '', placeholder: 'やるべきことを簡潔に（例: 準備書面提出）' }), 'task');
+    const detailRows = (v) => Math.min(12, Math.max(2, String(v || '').split('\n').length + 1));
+    const title = bind(el('textarea', { class: 'field', rows: detailRows(d.title), placeholder: '詳細（依頼内容・要対応事項など）' }, d.title || ''), 'title');
+    title.addEventListener('input', () => { title.rows = detailRows(title.value); });
     const v = d.deadline || '';
     const date = el('input', { type: 'date', class: 'field', value: v.slice(0, 10), 'aria-label': '期限' });
     const time = el('input', { type: 'time', class: 'field', step: 300, value: v.length > 10 && !v.endsWith('T00:00') ? v.slice(11, 16) : '', 'aria-label': '時刻（任意）' });
@@ -678,7 +690,8 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
     notes.addEventListener('input', () => { notes.rows = memoRows(notes.value); });
 
     const fields = [
-      el('label', { class: 'todo-ed-title' }, ['内容', title]),
+      el('label', { class: 'todo-ed-title' }, ['タスク', task]),
+      el('label', { class: 'todo-ed-title' }, ['詳細', title]),
       el('div', { class: 'todo-ed-deadline' }, [el('span', { class: 'todo-ed-label' }, '期限'), el('div', { class: 'todo-deadline-inputs' }, [date, time])]),
       el('label', { class: 'todo-ed-requester' }, ['依頼者', requester]),
       el('label', { class: 'todo-ed-client' }, ['依頼者の顧客', clientSel]),
@@ -737,7 +750,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
   const addBtn = el('button', { type: 'button', class: 'btn btn-small', onClick: () => {
     rows.push({ base: null, draft: { ...defaultTodo(), ...newDefaults, ...(fixedCaseId ? { caseId: fixedCaseId } : {}) }, removed: false });
     renderRows();
-    const inputs = listBox.querySelectorAll('.todo-ed-new .todo-ed-title input');
+    const inputs = listBox.querySelectorAll('.todo-ed-new .todo-ed-title input, .todo-ed-new .todo-ed-title textarea');
     if (inputs.length) inputs[inputs.length - 1].focus();
   } }, '＋ToDoを追加');
 
@@ -748,13 +761,13 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
   function collect() {
     const plan = { creates: [], updates: [], removes: [], errors: [] };
     for (const r of rows) {
-      const d = { ...r.draft, title: (r.draft.title || '').trim(), requester: (r.draft.requester || '').trim(), caseLabel: (r.draft.caseLabel || '').trim() };
+      const d = { ...r.draft, task: (r.draft.task || '').trim(), title: (r.draft.title || '').trim(), requester: (r.draft.requester || '').trim(), caseLabel: (r.draft.caseLabel || '').trim() };
       if (!r.base) {
-        if (d.title) plan.creates.push({ ...d, doneAt: d.done ? new Date().toISOString() : '' });
+        if (d.task || d.title) plan.creates.push({ ...d, doneAt: d.done ? new Date().toISOString() : '' });
         continue;
       }
       if (r.removed) { plan.removes.push(r.base); continue; }
-      if (!d.title) { plan.errors.push('内容が空のToDoがあります'); continue; }
+      if (!d.task && !d.title) { plan.errors.push('タスクも詳細も空のToDoがあります'); continue; }
       const changed = TODO_EDIT_KEYS.some((k) => (d[k] ?? '') !== (r.base[k] ?? ''));
       if (!changed) continue;
       if (!!d.done !== !!r.base.done) d.doneAt = d.done ? new Date().toISOString() : '';

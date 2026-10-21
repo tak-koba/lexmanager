@@ -1,6 +1,6 @@
 // LexManager 4 - 全体検索（#/search?q=...）
 import { el, clear } from '../ui/dom.js';
-import { displayName, kanaName, renderDeadlineBadge, opponentName } from './_shared.js';
+import { displayName, kanaName, renderDeadlineBadge, opponentName, todoTaskText } from './_shared.js';
 import { clientEmails } from '../model.js';
 
 export async function render(container, params, ctx) {
@@ -69,7 +69,7 @@ export async function render(container, params, ctx) {
     });
 
     const todoMatches = (all.todos || []).filter((t) => {
-      const title = (t.title || '').toLowerCase();
+      const title = `${t.task || ''} ${t.title || ''}`.toLowerCase();
       const notes = (t.notes || '').toLowerCase();
       const extra = [t.caseLabel, t.requester, t.mail && t.mail.subject, t.mail && t.mail.from].filter(Boolean).join(' ').toLowerCase();
       return title.includes(ql) || notes.includes(ql) || extra.includes(ql);
@@ -107,7 +107,7 @@ export async function render(container, params, ctx) {
       for (const t of todoMatches) {
         list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate(t.caseId ? `#/cases/${t.caseId}` : '#/todos') }, [
           renderDeadlineBadge(t.deadline),
-          el('span', {}, t.title || '(無題)'),
+          el('span', {}, todoTaskText(t)),
           (t.requester || t.caseLabel) ? el('span', { class: 'text-muted' }, [t.caseLabel, t.requester].filter(Boolean).join(' ／ ')) : null
         ]));
       }

@@ -275,6 +275,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .todo-item-requester { grid-area: requester; overflow-wrap: anywhere; font-size: 14px; }
 .todo-item-body { grid-area: body; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .todo-item-title { font-weight: 600; overflow-wrap: anywhere; white-space: pre-wrap; }
+.todo-item-detail { font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .todo-item.todo-done .todo-item-title { text-decoration: line-through; color: var(--text-2); }
 .todo-item.todo-done { opacity: .7; }
 .todo-sub, .todo-mail { font-size: 12.5px; overflow-wrap: anywhere; }

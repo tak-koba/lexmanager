@@ -468,13 +468,13 @@ export async function render(container, params, ctx) {
     section.appendChild(list);
     if (!todos.length) section.appendChild(el('p', { class: 'text-muted' }, 'ToDoはありません'));
 
-    const titleInput = el('input', { type: 'text', class: 'field', placeholder: '新しいToDo' });
+    const titleInput = el('input', { type: 'text', class: 'field', placeholder: '新しいToDo（タスク）' });
     const dl = dateTimeInputs('');
     const deadlineInput = { get value() { return dl.get(); } };
     const addBtn = el('button', { type: 'button', class: 'btn btn-small', onClick: async () => {
       if (!titleInput.value) { ctx.toast('内容を入力してください', 'error'); return; }
       try {
-        await ctx.store.create('todos', { ...defaultTodo(), title: titleInput.value, deadline: deadlineInput.value, caseId: record.id });
+        await ctx.store.create('todos', { ...defaultTodo(), task: titleInput.value.trim(), deadline: deadlineInput.value, caseId: record.id });
         ctx.toast('ToDoを追加しました', 'success');
         render(container, params, ctx);
       } catch (e) {

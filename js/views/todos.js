@@ -1,7 +1,7 @@
 // LexManager 4 - ToDo一覧
 // 案件ごとのまとまりで表示する。閲覧中は完了チェックだけ即時保存、まとまりごとの［編集］で
 // そのまとまりのToDoを入力欄にし、［保存］でまとめて保存する（DESIGN.md §6）。
-// 列はThunderbird「要返信orタスク」に合わせる（完了｜期限｜依頼者｜依頼内容。案件名はまとまりの見出し）。
+// 列はThunderbird「要返信orタスク」に合わせる（完了｜期限｜依頼者｜タスク・詳細。案件名はまとまりの見出し）。
 import { el, clear } from '../ui/dom.js';
 import { confirmDialog } from '../ui/dialog.js';
 import {
@@ -55,7 +55,7 @@ export async function render(container, params, ctx) {
   const clientById = new Map(clients.map((c) => [c.id, c]));
 
   // ---- 追加（内容・期限・案件だけですぐ登録） ----
-  const titleInput = el('input', { type: 'text', class: 'field', placeholder: '新しいToDo（内容）', 'aria-label': '新しいToDoの内容' });
+  const titleInput = el('input', { type: 'text', class: 'field', placeholder: '新しいToDo（タスク）', 'aria-label': '新しいToDoのタスク' });
   const dateInput = el('input', { type: 'date', class: 'field', 'aria-label': '期限' });
   const timeInput = el('input', { type: 'time', class: 'field', step: 300, 'aria-label': '時刻（任意）' });
   const caseSelect = el('select', { class: 'field', 'aria-label': '案件' }, [
@@ -70,7 +70,7 @@ export async function render(container, params, ctx) {
     const d = dateInput.value;
     try {
       await ctx.store.create('todos', {
-        title: titleInput.value.trim(), deadline: d ? (timeInput.value ? `${d}T${timeInput.value}` : d) : '',
+        task: titleInput.value.trim(), title: '', deadline: d ? (timeInput.value ? `${d}T${timeInput.value}` : d) : '',
         caseId: caseSelect.value, caseLabel: '', requester: '', clientId: '', done: false, doneAt: '', notes: ''
       });
       ctx.toast('ToDoを追加しました', 'success');
@@ -180,7 +180,7 @@ export async function render(container, params, ctx) {
     } else {
       const list = el('div', { class: 'todo-items' });
       list.appendChild(el('div', { class: 'todo-item todo-item-header', 'aria-hidden': 'true' }, [
-        el('div', {}, '完了'), el('div', {}, '期限'), el('div', {}, '依頼者'), el('div', {}, '依頼内容・要対応事項')
+        el('div', {}, '完了'), el('div', {}, '期限'), el('div', {}, '依頼者'), el('div', {}, 'タスク・詳細')
       ]));
       for (const t of g.items) {
         if (editingKey === `item:${t.id}`) {

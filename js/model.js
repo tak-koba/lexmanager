@@ -159,6 +159,7 @@ export function defaultCase(caseType) {
 export function defaultTodo() {
   return {
     id: '',
+    task: '',
     title: '',
     caseId: '',
     deadline: '',

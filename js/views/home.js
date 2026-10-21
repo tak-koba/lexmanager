@@ -2,7 +2,7 @@
 import { el, clear } from '../ui/dom.js';
 import {
   renderDeadlineBadge, displayName, sortByKana, kanaName,
-  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar
+  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar, todoTaskText
 } from './_shared.js';
 
 export async function render(container, params, ctx) {
@@ -284,7 +284,7 @@ function buildTodoSection(todos, ctx) {
     const row = el('li', { class: 'list-row' }, [
       cb,
       renderDeadlineBadge(t.deadline),
-      el('span', { onClick: () => ctx.navigate('#/todos') }, t.title || '(無題)')
+      el('span', { onClick: () => ctx.navigate('#/todos') }, todoTaskText(t))
     ]);
     list.appendChild(row);
   }
