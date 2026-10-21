@@ -2,7 +2,7 @@
 import { el, clear } from '../ui/dom.js';
 import {
   renderDeadlineBadge, displayName, sortByKana, kanaName,
-  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog
+  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar
 } from './_shared.js';
 
 export async function render(container, params, ctx) {
@@ -23,7 +23,8 @@ export async function render(container, params, ctx) {
       const all = await ctx.store.all();
       await quickCreateTodoDialog(ctx, all.cases);
       render(container, params, ctx);
-    } }, '＋ToDo')
+    } }, '＋ToDo'),
+    el('button', { type: 'button', class: 'btn', title: 'Googleカレンダーを開く', onClick: openCalendar }, '📅 カレンダー')
   ]);
   const syncPanel = el('div', { class: 'sync-panel', hidden: true });
   const syncBtn = el('button', { type: 'button', class: 'btn btn-primary sync-btn', 'aria-expanded': 'false', onClick: async () => {
@@ -94,6 +95,44 @@ async function fillSyncPanel(panel, ctx, rerender) {
       `取込待ち: ${status.inboxCount || 0}件`, () => pcImport(ctx, status.inboxCount || 0, rerender)));
     panel.appendChild(card('Export', 'iPhone用のデータ（snapshot.json）を最新の内容で作り直します',
       `前回の作成: ${fmt(status.snapshotAt)}`, () => pcExport(ctx, rerender)));
+    let g = null;
+    try { g = ctx.store.gcalStatus ? await ctx.store.gcalStatus() : null; } catch (e) { g = null; }
+    if (g && g.connected && g.calendarId) {
+      panel.appendChild(card('Googleカレンダー', `「${g.calendarName || 'カレンダー'}」とToDoを今すぐ同期します`,
+        `前回: ${fmt(g.lastRun)}${g.enabled ? '（このPCで10分ごとに自動同期）' : '（このPCは自動同期しない設定）'}`, () => gcalSyncNow(ctx, rerender)));
+    }
+  }
+}
+
+function gcalSummary(r) {
+  const parts = [];
+  if (r.imported) parts.push(`取込${r.imported}件`);
+  if (r.created) parts.push(`予定登録${r.created}件`);
+  if (r.updatedTodos + r.updatedEvents) parts.push(`更新${r.updatedTodos + r.updatedEvents}件`);
+  if (r.deletedEvents) parts.push(`予定削除${r.deletedEvents}件`);
+  if (r.trashedTodos) parts.push(`ToDoをごみ箱へ${r.trashedTodos}件`);
+  return parts.length ? parts.join('・') : '変更はありませんでした';
+}
+
+const HELD_LABEL = {
+  trashTodos: (n) => `Googleで削除された予定 ${n}件に対応するToDoを、ごみ箱へ移します`,
+  imports: (n) => `Googleの予定 ${n}件を、ToDoとして取り込みます`,
+  deleteEvents: (n) => `LexManagerで削除・登録解除したToDoの予定 ${n}件を、Googleから削除します`
+};
+
+async function gcalSyncNow(ctx, rerender, force = false) {
+  if (!force && !(await ctx.confirm('Googleカレンダーと今すぐ同期します。よろしいですか？'))) return;
+  try {
+    const { result } = await ctx.store.gcalSync(force);
+    if (result.held && result.held.length) {
+      const msg = result.held.map((h) => '・' + HELD_LABEL[h.kind](h.count)).join('\n');
+      if (await ctx.confirm(`件数が多いため、次の処理を止めています。実行してよいですか？\n${msg}`)) return gcalSyncNow(ctx, rerender, true);
+    }
+    ctx.toast(`Googleカレンダー: ${gcalSummary(result)}${result.conflicts.length ? `（両方で変更された項目 ${result.conflicts.length}件はLexManagerの内容を残しました）` : ''}`,
+      result.errors.length ? 'error' : 'success');
+    rerender();
+  } catch (e) {
+    ctx.toast('Googleカレンダーの同期に失敗しました: ' + e.message, 'error');
   }
 }
 
@@ -316,6 +355,29 @@ async function buildAttentionSection(ctx) {
       if (n > 0) {
         any = true;
         list.appendChild(el('li', { class: 'list-row' }, `iPhoneからの取込待ちが ${n} 件あります（同期 → Import）`));
+      }
+    } catch (e) { /* ignore */ }
+  }
+
+  if (ctx.store.gcalStatus) {
+    try {
+      const g = await ctx.store.gcalStatus();
+      const r = g.result || {};
+      if (g.connected && g.reauth) {
+        any = true;
+        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, 'Googleカレンダーへの再ログインが必要です（設定 → Googleカレンダー連携 → ログインし直す）'));
+      } else if (g.connected && g.error) {
+        any = true;
+        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, `Googleカレンダーの同期でエラーがありました: ${g.error}`));
+      }
+      if (r.held && r.held.length) {
+        any = true;
+        list.appendChild(el('li', { class: 'list-row' }, `Googleカレンダー: 件数が多いため止めている処理があります（同期 → Googleカレンダー で確認）`));
+      }
+      if (r.conflicts && r.conflicts.length) {
+        any = true;
+        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/todos') },
+          `Googleカレンダー: 両方で変更されたToDo ${r.conflicts.length}件はLexManagerの内容を残しました（${r.conflicts.map((c) => c.title).slice(0, 3).join('、')}）`));
       }
     } catch (e) { /* ignore */ }
   }

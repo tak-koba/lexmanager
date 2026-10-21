@@ -71,6 +71,9 @@ async function renderServerMode(container, ctx) {
   apiSection.appendChild(rowKey);
   container.appendChild(apiSection);
 
+  // Googleカレンダー連携
+  if (ctx.store.gcalStatus) container.appendChild(await buildGcalSection(ctx));
+
   // LANアクセス
   const lanSection = el('section', { class: 'section' });
   lanSection.appendChild(el('h3', {}, 'LANアクセス'));
@@ -236,6 +239,122 @@ async function renderServerMode(container, ctx) {
     }
   } }, 'アプリを終了'));
   container.appendChild(shutdownSection);
+}
+
+/**
+ * Googleカレンダー連携（PCのみ）。①Googleでの準備で得たクライアントID等を保存 → ②ログイン →
+ * ③同期するカレンダーを選ぶ → ④このPCで同期する をオン。同期の仕組みは lexmanager/gcal.py。
+ */
+async function buildGcalSection(ctx) {
+  const section = el('section', { class: 'section' });
+  section.appendChild(el('h3', {}, 'Googleカレンダー連携'));
+  let st;
+  try {
+    st = await ctx.store.gcalStatus();
+  } catch (e) {
+    section.appendChild(el('p', { class: 'text-error' }, '状態を取得できませんでした: ' + e.message));
+    return section;
+  }
+  const rerender = async () => section.replaceWith(await buildGcalSection(ctx));
+  const fmt = (iso) => (iso ? String(iso).slice(0, 16).replace('T', ' ') : '');
+
+  section.appendChild(el('p', { class: 'text-muted' },
+    'ToDoの「カレンダー登録」をオンにすると、選んだGoogleカレンダーに予定として登録します。そのカレンダーで追加した予定はToDoとして取り込みます。' +
+    '削除は両方向に反映されます（Googleで消した予定のToDoはごみ箱へ）。同期はこのPCが起動中に10分ごと、またはホームの［同期］から行います。'));
+
+  // ① Googleでの準備で得た値
+  const idInput = el('input', { type: 'text', class: 'field', value: st.clientId || '', placeholder: 'xxxx.apps.googleusercontent.com' });
+  const secretInput = el('input', { type: 'password', class: 'field', placeholder: st.clientSecretSet ? '設定済み（変更する場合のみ入力）' : 'クライアントシークレット' });
+  section.appendChild(el('div', { class: 'section-sub' }, '① Google Cloud で作った「OAuthクライアント（デスクトップアプリ）」の値'));
+  section.appendChild(el('label', {}, ['クライアントID', idInput]));
+  section.appendChild(el('label', {}, ['クライアントシークレット', secretInput]));
+  section.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
+    try {
+      await ctx.store.gcalConfig({ clientId: idInput.value, clientSecret: secretInput.value });
+      ctx.toast('保存しました（シークレットは暗号化して保存）', 'success');
+      await rerender();
+    } catch (e) { ctx.toast('保存に失敗しました: ' + e.message, 'error'); }
+  } }, '保存'));
+
+  // ② ログイン
+  section.appendChild(el('div', { class: 'section-sub' }, '② Googleにログイン'));
+  section.appendChild(el('p', {}, st.connected ? (st.reauth ? '⚠ ログインの有効期限が切れました。もう一度ログインしてください。' : '✅ 接続済み') : '未接続'));
+  section.appendChild(el('div', { class: 'field-row' }, [
+    el('button', { type: 'button', class: 'btn btn-primary', disabled: !(st.clientId && st.clientSecretSet), onClick: async () => {
+      try {
+        const r = await ctx.store.gcalAuthStart();
+        window.open(r.url, '_blank', 'noopener');
+        ctx.toast('開いた画面でGoogleにログインし、許可してください。終わったらこの画面で［状態を更新］を押してください', 'info');
+      } catch (e) { ctx.toast(e.message, 'error'); }
+    } }, st.connected ? 'ログインし直す' : 'Googleにログイン'),
+    el('button', { type: 'button', class: 'btn', onClick: rerender }, '状態を更新'),
+    st.connected ? el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
+      if (!(await confirmDialog('Googleカレンダーとの接続を解除します（予定やToDoは消えません）。よろしいですか？'))) return;
+      await ctx.store.gcalDisconnect();
+      await rerender();
+    } }, '接続を解除') : null
+  ]));
+  section.appendChild(el('p', { class: 'text-muted' }, `Google Cloud の「承認済みのリダイレクトURI」は不要です（デスクトップアプリ用）。参考: このPCの戻り先 ${st.redirectUri}`));
+
+  // ③ カレンダーの選択（名前ではなくIDで固定する）
+  section.appendChild(el('div', { class: 'section-sub' }, '③ 同期するカレンダー'));
+  const calBox = el('div', { class: 'field-row' });
+  calBox.appendChild(el('span', {}, st.calendarId ? `「${st.calendarName || st.calendarId}」` : '未選択'));
+  calBox.appendChild(el('button', { type: 'button', class: 'btn', disabled: !st.connected, onClick: async () => {
+    try {
+      const r = await ctx.store.gcalCalendars();
+      const sel = el('select', { class: 'field' }, (r.items || []).map((c) =>
+        el('option', { value: c.id, selected: c.id === st.calendarId || (!st.calendarId && c.name === 'ToDo') }, `${c.name}${c.primary ? '（メイン）' : ''}`)));
+      clear(calBox);
+      calBox.appendChild(sel);
+      calBox.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
+        const opt = sel.selectedOptions[0];
+        if (!opt) return;
+        if (!(await confirmDialog(`「${opt.textContent}」と同期します。このカレンダーの予定はToDoとして取り込まれます。よろしいですか？`))) return;
+        await ctx.store.gcalSetCalendar(opt.value, opt.textContent.replace(/（メイン）$/, ''));
+        await rerender();
+      } }, 'このカレンダーにする'));
+    } catch (e) { ctx.toast('カレンダー一覧を取得できませんでした: ' + e.message, 'error'); }
+  } }, st.calendarId ? '変更' : '選ぶ'));
+  section.appendChild(calBox);
+
+  // TBDカレンダー（ツール「空き日程の検索」で確定した候補を登録する先）
+  section.appendChild(el('div', { class: 'section-sub' }, '空き日程の候補を登録するカレンダー（TBD）'));
+  const tbdBox = el('div', { class: 'field-row' });
+  tbdBox.appendChild(el('span', {}, st.tbdCalendarId ? `「${st.tbdCalendarName || st.tbdCalendarId}」` : '未選択'));
+  tbdBox.appendChild(el('button', { type: 'button', class: 'btn', disabled: !st.connected, onClick: async () => {
+    try {
+      const r = await ctx.store.gcalCalendars();
+      const sel = el('select', { class: 'field' }, (r.items || []).map((c) =>
+        el('option', { value: c.id, selected: c.id === st.tbdCalendarId || (!st.tbdCalendarId && c.name === 'TBD') }, c.name)));
+      clear(tbdBox);
+      tbdBox.appendChild(sel);
+      tbdBox.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
+        const opt = sel.selectedOptions[0];
+        if (!opt) return;
+        await ctx.store.gcalSetTbdCalendar(opt.value, opt.textContent);
+        ctx.toast(`空き日程の候補は「${opt.textContent}」に登録します`, 'success');
+        await rerender();
+      } }, 'このカレンダーにする'));
+    } catch (e) { ctx.toast('カレンダー一覧を取得できませんでした: ' + e.message, 'error'); }
+  } }, st.tbdCalendarId ? '変更' : '選ぶ'));
+  section.appendChild(tbdBox);
+
+  // ④ 同期の担当
+  section.appendChild(el('div', { class: 'section-sub' }, '④ 同期を担当するPC'));
+  const enabled = el('input', { type: 'checkbox', checked: !!st.enabled, disabled: !(st.connected && st.calendarId) });
+  enabled.addEventListener('change', async () => {
+    await ctx.store.gcalConfig({ enabled: enabled.checked });
+    ctx.toast(enabled.checked ? 'このPCで同期します（10分ごと）' : 'このPCでの同期を止めました', 'success');
+    await rerender();
+  });
+  section.appendChild(el('label', { class: 'field-row' }, [enabled, `このPC（${st.device}）で同期する（同期は1台のPCだけで行ってください）`]));
+  if (st.leaseHolder && st.leaseHolder !== st.device) {
+    section.appendChild(el('p', { class: 'text-error' }, `⚠ 現在「${st.leaseHolder}」が同期を担当しています。2台で同時に同期しないでください。`));
+  }
+  if (st.lastRun) section.appendChild(el('p', { class: 'text-muted' }, `前回の同期: ${fmt(st.lastRun)}`));
+  if (st.error) section.appendChild(el('p', { class: 'text-error' }, `前回のエラー: ${st.error}`));
+  return section;
 }
 
 async function renderLocalMode(container, ctx) {

@@ -173,6 +173,20 @@ export class ServerStore {
     return this._req('./api/mobile/import', { method: 'POST' });
   }
 
+  // ---- Googleカレンダー連携（PCのみ） ----
+  async gcalStatus() { return this._req('./api/gcal/status'); }
+  async gcalConfig(patch) { return this._req('./api/gcal/config', { method: 'POST', body: JSON.stringify(patch) }); }
+  async gcalAuthStart() { return this._req('./api/gcal/auth/start', { method: 'POST' }); }
+  async gcalCalendars() { return this._req('./api/gcal/calendars'); }
+  async gcalSetCalendar(id, name) { return this._req('./api/gcal/calendar', { method: 'POST', body: JSON.stringify({ id, name }) }); }
+  async gcalSync(force = false) { return this._req('./api/gcal/sync', { method: 'POST', body: JSON.stringify({ force }) }); }
+  async gcalDisconnect() { return this._req('./api/gcal/disconnect', { method: 'POST' }); }
+  async gcalSetTbdCalendar(id, name) { return this._req('./api/gcal/tbd-calendar', { method: 'POST', body: JSON.stringify({ id, name }) }); }
+  /** 空き日程の検索（ツール）。 */
+  async gcalFree(opts) { return this._req('./api/gcal/free', { method: 'POST', body: JSON.stringify(opts) }); }
+  /** 確定した候補を TBD カレンダーに登録。 */
+  async gcalTbd(payload) { return this._req('./api/gcal/tbd', { method: 'POST', body: JSON.stringify(payload) }); }
+
   /** 自動バックアップの状況（最新のバックアップ日時など）。 */
   async backupStatus() {
     return this._req('./api/backup/status');

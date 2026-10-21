@@ -104,6 +104,7 @@ export function confirmDialog(message, { okLabel = 'OK', cancelLabel = 'キャ�
   return new Promise((resolve) => {
     const bodyNode = document.createElement('p');
     bodyNode.textContent = message;
+  bodyNode.style.whiteSpace = 'pre-line'; // 確認文の改行をそのまま表示する
 
     let resolved = false;
     const finish = (value) => {

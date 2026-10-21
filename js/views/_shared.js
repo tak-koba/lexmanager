@@ -346,10 +346,12 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
       ...sortByKana((cases || []).slice(), (c) => c.caseName).map((c) => el('option', { value: c.id, selected: c.id === presetCaseId }, c.caseName))
     ]);
     const requesterInput = el('input', { type: 'text', name: 'requester', class: 'field' });
+    const calendarInput = el('input', { type: 'checkbox', name: 'calendar' });
     form.appendChild(el('label', {}, ['内容', titleInput]));
     form.appendChild(el('label', {}, ['期限', dl.nodes]));
     form.appendChild(el('label', {}, ['案件', caseSelect]));
     form.appendChild(el('label', {}, ['依頼者', requesterInput]));
+    form.appendChild(el('label', { class: 'field-row' }, [calendarInput, '📅 Googleカレンダーに登録（期限が必要）']));
 
     openDialog({
       title: '新規ToDo（クイック登録）',
@@ -365,6 +367,7 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
             rec.deadline = dl.get();
             rec.caseId = caseSelect.value || '';
             rec.requester = requesterInput.value.trim();
+            rec.calendar = calendarInput.checked;
             if (!rec.title) {
               ctx.toast('内容を入力してください', 'error');
               return 'keep-open';
@@ -584,7 +587,7 @@ export function todoMailLine(todo) {
 // ToDo一覧（案件ごとのまとまり）と案件詳細のToDo欄で共用する。閲覧中は完了チェックだけ即時保存し、
 // それ以外は［編集］→［保存］でまとめて保存する（DESIGN.md §6）。
 
-const TODO_EDIT_KEYS = ['title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes'];
+const TODO_EDIT_KEYS = ['title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes', 'calendar'];
 
 /** 閲覧用のToDo1行。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
 export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged } = {}) {
@@ -610,7 +613,7 @@ export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, on
       ? (client ? el('a', { href: `#/clients/${client.id}` }, requester) : el('span', {}, requester))
       : el('span', { class: 'text-muted todo-empty' }, '依頼者なし')),
     el('div', { class: 'todo-item-body' }, [
-      el('div', { class: 'todo-item-title' }, t.title || '(無題)'),
+      el('div', { class: 'todo-item-title' }, [t.calendar ? el('span', { class: 'todo-cal', title: 'Googleカレンダーに登録' }, '📅 ') : null, t.title || '(無題)']),
       caseText ? el('div', { class: 'todo-sub text-muted' }, caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, `案件: ${caseText}`) : `案件: ${caseText}`) : null,
       todoMailLine(t),
       t.notes ? el('div', { class: 'todo-sub text-muted todo-notes' }, `📝 ${t.notes}`) : null
@@ -648,6 +651,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
       return node;
     };
     const done = bind(el('input', { type: 'checkbox', checked: !!d.done, 'aria-label': '完了' }), 'done', (n) => n.checked);
+    const calendar = bind(el('input', { type: 'checkbox', checked: !!d.calendar, 'aria-label': 'カレンダー登録' }), 'calendar', (n) => n.checked);
     const title = bind(el('input', { type: 'text', class: 'field', value: d.title || '', placeholder: '依頼内容・要対応事項' }), 'title');
     const v = d.deadline || '';
     const date = el('input', { type: 'date', class: 'field', value: v.slice(0, 10), 'aria-label': '期限' });
@@ -691,6 +695,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
     return el('div', { class: ['todo-ed-row', r.removed ? 'todo-ed-removed' : '', r.base ? '' : 'todo-ed-new'] }, [
       el('div', { class: 'todo-ed-head' }, [
         el('label', { class: 'todo-ed-done' }, [done, '完了']),
+        el('label', { class: 'todo-ed-done', title: '期限のあるToDoを、Googleカレンダーに予定として登録します（PCで同期したときに反映）' }, [calendar, '📅 カレンダー登録']),
         r.base ? null : el('span', { class: 'chip' }, '新規'),
         r.removed ? el('span', { class: 'chip' }, '保存すると削除') : null,
         delBtn
@@ -770,4 +775,26 @@ export async function commitTodoPlan(ctx, plan) {
     try { await ctx.store.remove('todos', base); ok++; } catch (e) { failed++; }
   }
   return { ok, failed };
+}
+
+// ---------------- カレンダーを開く ----------------
+
+/** iPhone・iPad（iPadOSはMacと名乗るため、タッチ対応で判定） */
+export function isIOS() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
+/**
+ * カレンダーを開く。PC: Googleカレンダー（新しいタブ）。iPhone・iPad: Googleカレンダーのアプリ
+ * （入っていなければ、1.5秒後にブラウザ版を別の画面で開く。LexManager自体は残す）。
+ */
+export function openCalendar() {
+  const web = 'https://calendar.google.com/calendar/r';
+  if (!isIOS()) {
+    window.open(web, '_blank', 'noopener');
+    return;
+  }
+  const timer = setTimeout(() => { if (!document.hidden) window.open(web, '_blank', 'noopener'); }, 1500);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearTimeout(timer); }, { once: true });
+  window.location.href = 'googlecalendar://';
 }

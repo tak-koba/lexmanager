@@ -3,12 +3,14 @@
 import { el, clear } from '../ui/dom.js';
 import { toWareki, toSeireki, calcAge } from '../util/gengo.js';
 import { currentGrade, educationTimeline, SCHOOL_STAGES, countDays, calcInterest } from '../util/calc.js';
+import { formatSlots, parseSlots } from '../util/slots.js';
 import { todayIso } from './_shared.js';
 
 const ERA_NAMES = ['令和', '平成', '昭和', '大正', '明治'];
 
 // ツールの一覧（表示順）。need はその端末で使える機能（PCのみ等）
 const TOOLS = [
+  { key: 'free', icon: '🕒', title: '空き日程の検索', desc: 'Googleカレンダーから空いている日時を探し、候補の文章を作ってTBDに仮登録', need: 'gcalFree', build: buildFreeSection },
   { key: 'age', icon: '🎂', title: '年齢・学年・卒業年次', desc: '生年月日から満年齢、現在の学年、入学・卒業の年を表示', build: buildAgeSection },
   { key: 'days', icon: '📅', title: '日数計算', desc: '2つの日付の間の日数（初日算入・不算入、うるう日の指摘）', build: buildDaysSection },
   { key: 'interest', icon: '💴', title: '利息計算', desc: '元金・利率・期間から利息／遅延損害金を計算', build: buildInterestSection },
@@ -20,7 +22,8 @@ const TOOLS = [
 
 export async function render(container, params, ctx) {
   clear(container);
-  const tools = TOOLS.filter((t) => !t.need || ctx.caps[t.need]);
+  // need: その端末で使える機能（ctx.caps の項目、またはサーバー版だけにある store の機能）
+  const tools = TOOLS.filter((t) => !t.need || ctx.caps[t.need] || typeof ctx.store[t.need] === 'function');
   const tool = params && params.tool ? tools.find((t) => t.key === params.tool) : null;
 
   if (!tool) {
@@ -49,6 +52,144 @@ function ymLabel(y, m) {
 }
 
 const yen = (n) => `${Number(n).toLocaleString('ja-JP')}円`;
+
+// ---------------- 空き日程の検索（PCのみ・Googleカレンダー連携が必要） ----------------
+const WEEKDAY_LABELS = ['月', '火', '水', '木', '金', '土', '日']; // 0=月（Pythonの weekday と同じ）
+
+/** 分 → 「30分」「1時間」「1時間30分」 */
+function durationLabel(m) {
+  const h = Math.floor(m / 60);
+  return h ? `${h}時間${m % 60 ? `${m % 60}分` : ''}` : `${m}分`;
+}
+
+function addDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch (e) {
+    const ta = el('textarea', { style: 'position:fixed;opacity:0' }, text);
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand && document.execCommand('copy');
+    ta.remove();
+    return !!ok;
+  }
+}
+
+async function buildFreeSection(ctx) {
+  const section = el('section', { class: 'section' });
+  let st = null;
+  try { st = await ctx.store.gcalStatus(); } catch (e) { /* 下で案内 */ }
+  if (!st || !st.connected) {
+    section.appendChild(el('p', {}, 'Googleカレンダーに接続すると使えます。'));
+    section.appendChild(el('a', { href: '#/settings', class: 'btn' }, '設定 → Googleカレンダー連携'));
+    return section;
+  }
+
+  const today = todayIso();
+  const from = el('input', { type: 'date', class: 'field', value: today });
+  const to = el('input', { type: 'date', class: 'field', value: addDays(today, 13) });
+  const wdBoxes = WEEKDAY_LABELS.map((w, i) => el('input', { type: 'checkbox', value: i, checked: i < 5 }));
+  const dayStart = el('input', { type: 'time', class: 'field', value: '10:00', step: 900 });
+  const dayEnd = el('input', { type: 'time', class: 'field', value: '17:00', step: 900 });
+  const minSel = el('select', { class: 'field' }, [30, 60, 90, 120, 180, 240].map((m) => el('option', { value: m, selected: m === 60 }, durationLabel(m))));
+  const bufSel = el('select', { class: 'field' }, [0, 15, 30, 45, 60, 90, 120].map((m) => el('option', { value: m, selected: m === 60 }, m === 0 ? 'なし' : durationLabel(m))));
+  const special = el('input', { type: 'text', class: 'field', value: 'Work (outside), Banquet' });
+  const withYear = el('input', { type: 'checkbox', checked: true });
+
+  section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['期間（開始）', from]), el('label', {}, ['期間（終了）', to])]));
+  section.appendChild(el('div', { class: 'tool-field' }, [el('span', { class: 'tool-label' }, '曜日'),
+    el('div', { class: 'tool-radios' }, wdBoxes.map((b, i) => el('label', { class: 'tool-radio' }, [b, WEEKDAY_LABELS[i]])))]));
+  section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['時間（開始）', dayStart]), el('label', {}, ['時間（終了）', dayEnd])]));
+  section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['必要な空き時間', minSel]), el('label', {}, ['前後の間隔', bufSel])]));
+  section.appendChild(el('label', {}, ['前後に必ず1時間以上空けるカレンダー（カンマ区切り）', special]));
+  section.appendChild(el('p', { class: 'text-muted' }, `対象: マイカレンダーの予定（「${st.calendarName || 'ToDo'}」は除く）。終日の予定がある日・祝日は除外します。`));
+
+  const result = el('div', { class: 'tool-result' });
+  const searchBtn = el('button', { type: 'button', class: 'btn btn-primary', onClick: search }, '検索');
+  section.appendChild(searchBtn);
+  section.appendChild(result);
+
+  let last = null;      // 前回の検索結果（年の表示切替に使う）
+  let edited = false;   // 候補テキストを手で直したか
+
+  async function search() {
+    clear(result);
+    const weekdays = wdBoxes.filter((b) => b.checked).map((b) => Number(b.value));
+    if (!weekdays.length) { ctx.toast('曜日を1つ以上選んでください', 'error'); return; }
+    if (!from.value || !to.value || to.value < from.value) { ctx.toast('期間を正しく入力してください', 'error'); return; }
+    if (!dayStart.value || !dayEnd.value || dayEnd.value <= dayStart.value) { ctx.toast('時間を正しく入力してください', 'error'); return; }
+    searchBtn.disabled = true;
+    result.appendChild(el('p', { class: 'text-muted' }, 'Googleカレンダーを確認しています…'));
+    try {
+      last = await ctx.store.gcalFree({
+        start: from.value, end: to.value, weekdays, dayStart: dayStart.value, dayEnd: dayEnd.value,
+        minMinutes: Number(minSel.value), bufferMinutes: Number(bufSel.value),
+        specialNames: special.value.split(/[,、]/).map((s) => s.trim()).filter(Boolean), specialMinMinutes: 60
+      });
+      last.minMinutes = Number(minSel.value);
+      renderResult();
+    } catch (e) {
+      clear(result);
+      result.appendChild(el('p', { class: 'text-error' }, '検索できませんでした: ' + e.message));
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  function renderResult() {
+    clear(result);
+    for (const w of last.warnings || []) result.appendChild(el('p', { class: 'tool-warn' }, `⚠ ${w}`));
+    if (!last.days.length) {
+      result.appendChild(el('p', {}, '条件に合う空き時間はありませんでした。'));
+      return;
+    }
+    edited = false;
+    const text = el('textarea', { class: 'field free-text', rows: Math.min(14, last.days.length + 1) }, formatSlots(last.days, last.minMinutes, withYear.checked));
+    text.addEventListener('input', () => { edited = true; });
+    withYear.onchange = async () => {
+      if (edited && !(await ctx.confirm('直した内容を破棄して、年の表示を切り替えますか？'))) { withYear.checked = !withYear.checked; return; }
+      text.value = formatSlots(last.days, last.minMinutes, withYear.checked);
+      edited = false;
+    };
+    const title = el('input', { type: 'text', class: 'field', placeholder: '例: ○○社 打合せ' });
+    const memo = el('textarea', { class: 'field', rows: 2, placeholder: '何の予定調整か（TBDの予定のメモ欄に入ります）' });
+
+    result.appendChild(el('label', { class: 'field-row' }, [withYear, '年を記載する']));
+    result.appendChild(el('label', {}, ['候補（直して使えます）', text]));
+    result.appendChild(el('label', {}, ['件名（TBDの予定の件名）', title]));
+    result.appendChild(el('label', {}, ['メモ', memo]));
+    result.appendChild(el('div', { class: 'field-row' }, [
+      el('button', { type: 'button', class: 'btn', onClick: async () => {
+        ctx.toast((await copyText(text.value)) ? 'コピーしました' : 'コピーできませんでした。手で選択してコピーしてください', 'info');
+      } }, 'コピーだけ'),
+      el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
+        const parsed = parseSlots(text.value, today);
+        if (!parsed.slots.length) { ctx.toast('候補の日時を読み取れませんでした', 'error'); return; }
+        if (!title.value.trim()) { ctx.toast('件名を入力してください', 'error'); title.focus(); return; }
+        if (!st.tbdCalendarId) { ctx.toast('設定でTBDカレンダーを選んでください', 'error'); return; }
+        const skipped = parsed.errors.filter((l) => l.trim()).length;
+        const ok = await ctx.confirm(`テキストをコピーし、${parsed.slots.length}件の候補を「${st.tbdCalendarName || 'TBD'}」カレンダーに登録します。` +
+          (skipped ? `\n（日時を読み取れない行 ${skipped}行は登録しません）` : '') + '\nよろしいですか？');
+        if (!ok) return;
+        const copied = await copyText(text.value);
+        try {
+          const r = await ctx.store.gcalTbd({ title: title.value.trim(), memo: memo.value, slots: parsed.slots });
+          ctx.toast(copied ? `コピーし、TBDに${r.created}件登録しました` : `TBDに${r.created}件登録しました（コピーはできなかったので、［コピーだけ］を押してください）`, copied ? 'success' : 'info');
+        } catch (e) {
+          ctx.toast('登録に失敗しました: ' + e.message, 'error');
+        }
+      } }, '確定（コピーしてTBDに登録）')
+    ]));
+  }
+  return section;
+}
 
 // ---------------- 年齢・学年・卒業年次 ----------------
 function buildAgeSection() {

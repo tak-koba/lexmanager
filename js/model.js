@@ -167,7 +167,8 @@ export function defaultTodo() {
     notes: '',
     caseLabel: '',
     requester: '',
-    clientId: ''
+    clientId: '',
+    calendar: false
   };
 }
 
