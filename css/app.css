@@ -260,8 +260,8 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 
 /* 1件の表示: 広い画面は「完了｜期限｜依頼者｜依頼内容」の列、狭い画面は内容を上に・期限と依頼者を下に */
 .todo-item {
-  display: grid; grid-template-columns: 2.5em 9.5em minmax(5em, 18%) minmax(0, 1fr);
-  grid-template-areas: "check deadline requester body";
+  display: grid; grid-template-columns: 2.5em 9.5em minmax(5em, 18%) minmax(0, 1fr) auto;
+  grid-template-areas: "check deadline requester body act";
   gap: 4px 10px; align-items: start; padding: 8px 0; border-top: 1px solid var(--border);
 }
 .todo-item-header { font-size: 12px; color: var(--text-2); font-weight: 600; padding: 4px 0; border-top: 0; }
@@ -278,7 +278,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .todo-item.todo-done .todo-item-title { text-decoration: line-through; color: var(--text-2); }
 .todo-item.todo-done { opacity: .7; }
 .todo-sub, .todo-mail { font-size: 12.5px; overflow-wrap: anywhere; }
-.todo-notes { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
+.todo-notes { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
 .todo-empty { font-size: 12.5px; }
 .todo-cal { font-size: 13px; }
 .todo-deadline-inputs { display: flex; gap: 6px; }
@@ -299,7 +299,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .todo-ed-label { font-size: 12.5px; color: var(--text-2); }
 .todo-ed-title, .todo-ed-notes, .todo-ed-hint, .todo-ed-fields > .todo-mail { grid-column: 1 / -1; }
 .todo-ed-hint:empty { display: none; }
-.todo-ed-fields textarea { min-height: 2.6em; resize: vertical; }
+.todo-ed-fields textarea { resize: vertical; }
 
 /* チップ・バッジ */
 .chip-row { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 10px; }
@@ -329,6 +329,13 @@ button.chip:hover { color: var(--text); }
 .home-grid > .section + .section { margin-top: 0; }
 .stat-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
 .result { margin-top: 8px; font-weight: 700; }
+/* ペンのアイコンだけのボタン（編集） */
+.btn.btn-pen { min-width: 38px; padding: 0 9px; justify-content: center; }
+.btn-pen .icon { display: inline-flex; line-height: 0; }
+.todo-item-act { grid-area: act; }
+.todo-item-editing { border-top: 1px solid var(--border); padding: 10px 0; display: flex; flex-direction: column; gap: 8px; }
+.todo-item-editing > .todo-group-actions { justify-content: flex-end; }
+.todo-ed-memo { resize: vertical; }
 
 /* ホーム: 同期（Import / Export） */
 .quick-actions > .sync-btn { margin-left: auto; }
@@ -466,8 +473,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inh
   /* ToDo: 内容を上に、期限・依頼者を下に。列見出しは出さない */
   .todo-item-header { display: none; }
   .todo-item {
-    grid-template-columns: 2.25em auto 1fr;
-    grid-template-areas: "check body body" ". deadline requester";
+    grid-template-columns: 2.25em auto 1fr auto;
+    grid-template-areas: "check body body act" ". deadline requester requester";
     padding: 10px 0;
   }
   .todo-item-requester { font-size: 13px; color: var(--text-2); align-self: center; }

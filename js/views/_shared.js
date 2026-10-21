@@ -126,13 +126,21 @@ export function kanaAssistPair(nameInput, kanaInput) {
   }
 }
 
-/** セクション見出し + [編集]ボタンの共通レイアウト。 */
+// 編集ボタン（ペンのアイコン）。文字の「編集」の代わりに全画面で使う。title・aria-label で「編集」と読み上げる
+const PEN_SVG = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>';
+
+export function editIconButton(onClick, { label = '編集', primary = false, disabled = false } = {}) {
+  return el('button', { type: 'button', class: ['btn', 'btn-pen', primary ? 'btn-primary' : ''], title: label, 'aria-label': label, disabled, onClick },
+    el('span', { class: 'icon', html: PEN_SVG }));
+}
+
+/** セクション見出し + 編集ボタン（ペン）の共通レイアウト。 */
 export function sectionHeader(title, onEdit) {
   const header = el('div', { class: 'section-header' }, [
     el('h3', {}, title)
   ]);
   if (onEdit) {
-    header.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: onEdit }, '編集'));
+    header.appendChild(editIconButton(onEdit));
   }
   return header;
 }
@@ -152,7 +160,7 @@ export function editBar(editMode, { onEdit, onCancel, onSave }, lead) {
   if (!editMode) {
     return el('div', { class: 'edit-bar' }, [
       lead || null,
-      el('button', { type: 'button', class: 'btn btn-primary edit-bar-edit', onClick: onEdit }, '編集')
+      editIconButton(onEdit, { primary: true })
     ]);
   }
   return el('div', { class: 'edit-bar editing' }, [
@@ -590,7 +598,7 @@ export function todoMailLine(todo) {
 const TODO_EDIT_KEYS = ['title', 'deadline', 'done', 'requester', 'clientId', 'caseLabel', 'caseId', 'notes', 'calendar'];
 
 /** 閲覧用のToDo1行。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
-export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged } = {}) {
+export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged, onEdit, editDisabled = false } = {}) {
   const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
     try {
       const res = await ctx.store.update('todos', { ...t, done: cb.checked, doneAt: cb.checked ? new Date().toISOString() : '' }, t);
@@ -617,7 +625,8 @@ export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, on
       caseText ? el('div', { class: 'todo-sub text-muted' }, caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, `案件: ${caseText}`) : `案件: ${caseText}`) : null,
       todoMailLine(t),
       t.notes ? el('div', { class: 'todo-sub text-muted todo-notes' }, `📝 ${t.notes}`) : null
-    ])
+    ]),
+    onEdit ? el('div', { class: 'todo-item-act' }, editIconButton(onEdit, { label: 'このToDoを編集', disabled: editDisabled })) : null
   ]);
 }
 
@@ -630,7 +639,7 @@ function formatTodoDeadline(v) {
  * {creates, updates:[{base,payload}], removes:[base], errors:[]} を返す（まだ保存しない）。
  * fixedCaseId を渡すと案件欄を出さない（案件詳細の中で使う場合）。newDefaults は追加行の初期値。
  */
-export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, newDefaults = {} }) {
+export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, newDefaults = {}, allowAdd = true }) {
   const form = el('form', { class: 'todo-editor', onSubmit: (e) => e.preventDefault() });
   const listBox = el('div', { class: 'todo-editor-list' });
   const rows = (todos || []).map((t) => ({ base: t, draft: { ...t }, removed: false }));
@@ -663,7 +672,10 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
       el('option', { value: '' }, '顧客と紐付けない'),
       ...sortedClients.map((c) => el('option', { value: c.id, selected: c.id === d.clientId }, displayName(c) || '(名称未設定)'))
     ]), 'clientId');
-    const notes = bind(el('textarea', { class: 'field', rows: 1, placeholder: 'メモ' }, d.notes || ''), 'notes');
+    // メモは書いた行数に合わせて広がる（最低4行。行数で決めるので画面の状態に左右されない）
+    const memoRows = (v) => Math.min(20, Math.max(4, String(v || '').split('\n').length + 1));
+    const notes = bind(el('textarea', { class: 'field todo-ed-memo', rows: memoRows(d.notes), placeholder: 'メモ' }, d.notes || ''), 'notes');
+    notes.addEventListener('input', () => { notes.rows = memoRows(notes.value); });
 
     const fields = [
       el('label', { class: 'todo-ed-title' }, ['内容', title]),
@@ -731,7 +743,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
 
   renderRows();
   form.appendChild(listBox);
-  form.appendChild(addBtn);
+  if (allowAdd) form.appendChild(addBtn);
 
   function collect() {
     const plan = { creates: [], updates: [], removes: [], errors: [] };

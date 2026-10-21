@@ -6,7 +6,7 @@ import { el, clear } from '../ui/dom.js';
 import { confirmDialog } from '../ui/dialog.js';
 import {
   quickCreateTodoDialog, sortByKana, suggestCase,
-  todoViewRow, todoGroupEditor, commitTodoPlan
+  todoViewRow, todoGroupEditor, commitTodoPlan, editIconButton
 } from './_shared.js';
 
 // 絞込・並び順は画面移動しても保持する（モジュール変数）
@@ -124,7 +124,7 @@ export async function render(container, params, ctx) {
       groups.get(k).push(t);
     }
     // 編集中のまとまりは、絞込で空になっても表示を続ける
-    if (editingKey && !groups.has(editingKey)) groups.set(editingKey, []);
+    if (editingKey && !editingKey.startsWith('item:') && !groups.has(editingKey)) groups.set(editingKey, []);
     if (!groups.size) {
       listBox.appendChild(el('p', { class: 'text-muted' }, '該当するToDoはありません'));
       return;
@@ -171,7 +171,7 @@ export async function render(container, params, ctx) {
       if (hit) {
         actions.appendChild(el('button', { type: 'button', class: 'btn btn-small', title: '案件名のテキストはそのまま残ります', onClick: () => linkGroup(g, hit) }, '🔗 案件に紐付け'));
       }
-      actions.appendChild(el('button', { type: 'button', class: 'btn btn-small', disabled: !!editingKey, onClick: () => startEdit(g) }, '編集'));
+      actions.appendChild(editIconButton(() => startEdit(g), { label: 'このまとまりのToDoをまとめて編集', disabled: !!editingKey }));
     }
     section.appendChild(el('div', { class: 'todo-group-head' }, [headLeft, actions]));
 
@@ -183,11 +183,23 @@ export async function render(container, params, ctx) {
         el('div', {}, '完了'), el('div', {}, '期限'), el('div', {}, '依頼者'), el('div', {}, '依頼内容・要対応事項')
       ]));
       for (const t of g.items) {
-        list.appendChild(todoViewRow(ctx, t, { caseById, clientById, onChanged: (saved) => {
-          const i = todos.findIndex((x) => x.id === saved.id);
-          if (i >= 0) todos[i] = saved;
-          renderList();
-        } }));
+        if (editingKey === `item:${t.id}`) {
+          // 1件だけの編集（行の位置で入力欄に切り替える）
+          list.appendChild(el('div', { class: 'todo-item-editing' }, [
+            editor.node,
+            el('div', { class: 'todo-group-actions' }, [
+              el('button', { type: 'button', class: 'btn', onClick: cancelEdit }, 'キャンセル'),
+              el('button', { type: 'button', class: 'btn btn-primary', onClick: saveEdit }, '保存')
+            ])
+          ]));
+          continue;
+        }
+        list.appendChild(todoViewRow(ctx, t, { caseById, clientById, onEdit: () => startItemEdit(t), editDisabled: !!editingKey,
+          onChanged: (saved) => {
+            const i = todos.findIndex((x) => x.id === saved.id);
+            if (i >= 0) todos[i] = saved;
+            renderList();
+          } }));
       }
       section.appendChild(list);
     }
@@ -199,6 +211,16 @@ export async function render(container, params, ctx) {
     dirty = false;
     const newDefaults = g.caseObj ? { caseId: g.caseObj.id } : (g.label ? { caseLabel: g.label } : {});
     editor = todoGroupEditor({ todos: g.items, cases, clients, newDefaults });
+    editor.node.addEventListener('input', () => { dirty = true; });
+    editor.node.addEventListener('change', () => { dirty = true; });
+    editor.node.addEventListener('click', (e) => { if (e.target.closest('button')) dirty = true; });
+    renderList();
+  }
+
+  function startItemEdit(t) {
+    editingKey = `item:${t.id}`;
+    dirty = false;
+    editor = todoGroupEditor({ todos: [t], cases, clients, allowAdd: false });
     editor.node.addEventListener('input', () => { dirty = true; });
     editor.node.addEventListener('change', () => { dirty = true; });
     editor.node.addEventListener('click', (e) => { if (e.target.closest('button')) dirty = true; });
