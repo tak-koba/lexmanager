@@ -74,6 +74,7 @@ async function renderServerMode(container, ctx) {
   // LANアクセス
   const lanSection = el('section', { class: 'section' });
   lanSection.appendChild(el('h3', {}, 'LANアクセス'));
+  lanSection.appendChild(el('p', { class: 'text-muted' }, 'オンにすると、同じネットワーク（事務所のWi-Fi等）にある他の端末のブラウザから、このPCのLexManagerを開けるようになります（表示されるトークンが必要）。iPhoneは同期（Import／Export）で使えるため、通常はオフのままで構いません。'));
   const lanCheckbox = el('input', { type: 'checkbox', checked: !!settings.lanAccess });
   lanSection.appendChild(el('label', { class: 'field-row' }, [lanCheckbox, 'LANアクセスを許可する']));
   if (settings.lanAccess && settings.lanToken) {
@@ -92,7 +93,8 @@ async function renderServerMode(container, ctx) {
   // 更新確認
   if (ctx.caps.update) {
     const updateSection = el('section', { class: 'section' });
-    updateSection.appendChild(el('h3', {}, '更新確認・適用'));
+    updateSection.appendChild(el('h3', {}, 'Update'));
+    updateSection.appendChild(el('p', { class: 'text-muted' }, 'LexManager本体の新しい版がGitHubにあるかを確認し、あれば取り込みます。適用後はアプリの再起動が必要です。'));
     const statusBox = el('div', {}, '');
     updateSection.appendChild(statusBox);
     updateSection.appendChild(el('div', { class: 'field-row' }, [
@@ -119,10 +121,15 @@ async function renderServerMode(container, ctx) {
     container.appendChild(updateSection);
   }
 
-  // 移行
+  // 移行（旧LexManagerの data.json からの一度きりの取り込み。完了後は表示しない）
+  let migrated = true;
   if (ctx.caps.migrate) {
+    try { const st = await ctx.store.migrationStatus(); migrated = !!(st && st.migrated); } catch (e) { migrated = false; }
+  }
+  if (ctx.caps.migrate && !migrated) {
     const migSection = el('section', { class: 'section' });
-    migSection.appendChild(el('h3', {}, '移行'));
+    migSection.appendChild(el('h3', {}, '旧データの移行'));
+    migSection.appendChild(el('p', { class: 'text-muted' }, '旧LexManager（data.json）のデータを、今の形式に取り込む一度きりの作業です。旧データは変更されません。'));
     const migStatusBox = el('div', {}, '');
     migSection.appendChild(migStatusBox);
     try {
@@ -146,28 +153,7 @@ async function renderServerMode(container, ctx) {
     container.appendChild(migSection);
   }
 
-  // iPhone取込
-  if (ctx.caps.mobileImport) {
-    const mobSection = el('section', { class: 'section' });
-    mobSection.appendChild(el('h3', {}, 'iPhone取込'));
-    const box = el('div', {}, '');
-    mobSection.appendChild(box);
-    try {
-      const status = await ctx.store.getMobileStatus();
-      box.appendChild(el('p', {}, `取込待ち: ${(status && status.inboxCount) || 0} 件`));
-    } catch (e) {
-      box.appendChild(el('p', { class: 'text-error' }, '状態取得に失敗しました'));
-    }
-    mobSection.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-      try {
-        const res = await ctx.store.importMobile();
-        ctx.toast(`取込完了: 適用${res.applied || 0}件 / 統合${res.merged || 0}件 / 競合${res.conflicts || 0}件`, 'success');
-      } catch (e) {
-        ctx.toast('取込に失敗しました: ' + e.message, 'error');
-      }
-    } }, '取込実行'));
-    container.appendChild(mobSection);
-  }
+  // iPhoneとの同期はホームの［同期］（Import / Export）に一本化した
 
   // 競合一覧
   if (ctx.caps.conflicts) {
@@ -212,10 +198,24 @@ async function renderServerMode(container, ctx) {
     container.appendChild(conflictSection);
   }
 
-  // JSONバックアップ
+  // バックアップ（自動: 起動時と1時間ごとに確認し1日1回、30日分保持。手動: 全データをJSONで保存）
   const backupSection = el('section', { class: 'section' });
-  backupSection.appendChild(el('h3', {}, 'JSONバックアップ'));
-  backupSection.appendChild(el('a', { href: ctx.store.exportJsonUrl(), target: '_blank', rel: 'noopener', class: 'btn' }, 'JSONダウンロード'));
+  backupSection.appendChild(el('h3', {}, 'バックアップ'));
+  try {
+    const st = ctx.store.backupStatus ? await ctx.store.backupStatus() : null;
+    const fmt = (b) => (b ? `${b.at.slice(0, 16).replace('T', ' ')}（${b.device}）` : 'まだありません');
+    if (st) {
+      backupSection.appendChild(el('p', {}, `最終バックアップ: ${fmt(st.latest)}`));
+      if (st.latest && st.latestThisDevice && st.latest.name !== st.latestThisDevice.name) {
+        backupSection.appendChild(el('p', { class: 'text-muted' }, `この端末の最終バックアップ: ${fmt(st.latestThisDevice)}`));
+      }
+      backupSection.appendChild(el('p', { class: 'text-muted' }, `自動バックアップ: アプリ起動中に1日1回、データフォルダの backups に作成し、${st.retentionDays}日分を保存しています（現在${st.count}件。添付ファイルは含みません）。`));
+    }
+  } catch (e) {
+    backupSection.appendChild(el('p', { class: 'text-error' }, 'バックアップの状況を取得できませんでした'));
+  }
+  backupSection.appendChild(el('p', { class: 'text-muted' }, '［保存］は、全データを1つのファイル（JSON）としてダウンロードします。OneDrive以外の場所にも控えを残したいときに使います。'));
+  backupSection.appendChild(el('a', { href: ctx.store.exportJsonUrl(), target: '_blank', rel: 'noopener', class: 'btn' }, '保存'));
   container.appendChild(backupSection);
 
   // アプリを終了

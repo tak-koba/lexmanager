@@ -25,7 +25,16 @@ export async function render(container, params, ctx) {
       render(container, params, ctx);
     } }, '＋ToDo')
   ]);
+  const syncPanel = el('div', { class: 'sync-panel', hidden: true });
+  const syncBtn = el('button', { type: 'button', class: 'btn btn-primary sync-btn', 'aria-expanded': 'false', onClick: async () => {
+    const open = syncPanel.hidden;
+    syncPanel.hidden = !open;
+    syncBtn.setAttribute('aria-expanded', String(open));
+    if (open) await fillSyncPanel(syncPanel, ctx, () => render(container, params, ctx));
+  } }, '⇅ 同期');
+  quickRow.appendChild(syncBtn);
   container.appendChild(quickRow);
+  container.appendChild(syncPanel);
 
   const body = el('div', { class: 'home-grid' });
   container.appendChild(body);
@@ -41,10 +50,114 @@ export async function render(container, params, ctx) {
   }
 
   clear(body);
+  // 要対応は、対応が必要なものがあるときだけ一番上に出す
+  const attention = await buildAttentionSection(ctx);
+  if (attention) body.appendChild(attention);
   body.appendChild(buildDeadlineSection(all.cases, ctx));
   body.appendChild(buildTodoSection(all.todos, ctx));
   body.appendChild(buildRecentSection(all, ctx));
-  body.appendChild(await buildAttentionSection(ctx));
+}
+
+// ---------------- 同期（Import / Export） ----------------
+// PC: Import = iPhoneで書き出した変更（mobile/inbox）を取り込む、Export = iPhone用の snapshot.json を作り直す
+// iPhone: Import = PCのデータ（snapshot.json）を読み込む、Export = iPhoneでの変更を書き出す
+async function fillSyncPanel(panel, ctx, rerender) {
+  clear(panel);
+  const store = ctx.store;
+  const local = !!ctx.caps.local;
+  const fmt = (iso) => (iso ? String(iso).slice(0, 16).replace('T', ' ') : '未実施');
+
+  let status = {};
+  try {
+    if (local) {
+      status.pending = store.pendingChangesCount ? await store.pendingChangesCount() : 0;
+      const meta = store.getSyncInfo ? store.getSyncInfo() : {};
+      status = { ...status, ...meta };
+    } else if (store.getMobileStatus) {
+      status = await store.getMobileStatus();
+    }
+  } catch (e) { /* 状態が取れなくても操作はできる */ }
+
+  const card = (title, desc, info, onClick) => el('button', { type: 'button', class: 'sync-card', onClick }, [
+    el('span', { class: 'sync-card-title' }, title),
+    el('span', { class: 'sync-card-desc' }, desc),
+    info ? el('span', { class: 'sync-card-info text-muted' }, info) : null
+  ]);
+
+  if (local) {
+    panel.appendChild(card('Import', 'PCのデータ（snapshot.json）を読み込み、この端末のデータを置き換えます',
+      `前回の読込: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
+    panel.appendChild(card('Export', 'この端末で変更した内容を書き出します（PCで取り込みます）',
+      `未書出しの変更: ${status.pending || 0}件 ／ 前回の書出し: ${fmt(status.lastExportAt)}`, () => iphoneExport(ctx, status.pending || 0, rerender)));
+  } else {
+    panel.appendChild(card('Import', 'iPhoneで書き出した変更（mobile/inbox）を取り込みます',
+      `取込待ち: ${status.inboxCount || 0}件`, () => pcImport(ctx, status.inboxCount || 0, rerender)));
+    panel.appendChild(card('Export', 'iPhone用のデータ（snapshot.json）を最新の内容で作り直します',
+      `前回の作成: ${fmt(status.snapshotAt)}`, () => pcExport(ctx, rerender)));
+  }
+}
+
+async function pcImport(ctx, count, rerender) {
+  if (!count) {
+    if (!(await ctx.confirm('取込待ちのファイルはありません（OneDriveの同期が終わっていない可能性があります）。それでも取込を実行しますか？'))) return;
+  } else if (!(await ctx.confirm(`iPhoneからの変更 ${count}件を取り込みます。よろしいですか？`))) return;
+  try {
+    const res = await ctx.store.importMobile();
+    ctx.toast(`取込完了: 適用${res.applied || 0}件 / 統合${res.merged || 0}件 / 競合${res.conflicts || 0}件`, res.conflicts ? 'info' : 'success');
+    rerender();
+  } catch (e) {
+    ctx.toast('取込に失敗しました: ' + e.message, 'error');
+  }
+}
+
+async function pcExport(ctx, rerender) {
+  if (!(await ctx.confirm('iPhone用のデータ（LexManagerData/mobile/snapshot.json）を最新の内容で作り直します。よろしいですか？'))) return;
+  try {
+    await ctx.store.regenerateSnapshot();
+    ctx.toast('iPhone用のデータを作り直しました。OneDriveの同期後、iPhoneで Import してください', 'success');
+    rerender();
+  } catch (e) {
+    ctx.toast('作成に失敗しました: ' + e.message, 'error');
+  }
+}
+
+/** iPhoneの Import: 確認画面の中でファイルを選ぶ（iPhoneでは、ボタンを押した流れの中でないとファイル選択を開けないため）。 */
+async function iphoneImport(ctx, rerender) {
+  const store = ctx.store;
+  let unexported = false;
+  try { unexported = store.hasUnexportedChanges ? await store.hasUnexportedChanges() : false; } catch (e) { /* ignore */ }
+  const fileInput = el('input', { type: 'file', accept: 'application/json,.json' });
+  const body = el('div', { class: 'field-stack' }, [
+    el('p', {}, 'OneDriveの LexManagerData → mobile → snapshot.json を選ぶと、この端末のデータがPCの内容に置き換わります。'),
+    unexported ? el('p', { class: 'text-error' }, '⚠ まだ書き出していない変更があります。読み込むとその変更は消えます。先に Export することをお勧めします。') : null,
+    el('label', { class: 'btn btn-primary file-btn' }, [fileInput, 'snapshot.json を選んで読み込む'])
+  ]);
+  const dlg = ctx.openDialog({ title: 'Import（PCのデータを読み込む）', bodyNode: body, actions: [{ label: 'キャンセル', onClick: () => {} }] });
+  fileInput.addEventListener('change', async () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    try {
+      const r = await store.importSnapshot(file);
+      if (dlg && dlg.close) dlg.close();
+      ctx.toast(`読み込みました（顧客${r.counts.clients}件・案件${r.counts.cases}件・ToDo${r.counts.todos}件）`, 'success');
+      await ctx.refresh();
+      rerender();
+    } catch (e) {
+      ctx.toast('読込に失敗しました: ' + e.message, 'error');
+    }
+  });
+}
+
+async function iphoneExport(ctx, pending, rerender) {
+  if (!pending && !(await ctx.confirm('書き出していない変更はありません。それでも書き出しますか？'))) return;
+  if (pending && !(await ctx.confirm(`この端末での変更 ${pending}件を書き出します。保存先は OneDrive の LexManagerData → mobile → inbox を選んでください。よろしいですか？`))) return;
+  try {
+    const r = await ctx.store.exportChanges();
+    ctx.toast(`${r.count}件の変更を書き出しました。OneDriveの LexManagerData/mobile/inbox に保存してください`, 'success');
+    rerender();
+  } catch (e) {
+    ctx.toast('書出しに失敗しました: ' + e.message, 'error');
+  }
 }
 
 function buildDeadlineSection(cases, ctx) {
@@ -141,9 +254,10 @@ function buildTodoSection(todos, ctx) {
   return section;
 }
 
+// 最近更新: この端末・他の端末を問わず、最近登録・変更した顧客と案件（直近5件）。続きの作業にすぐ戻るため。
 function buildRecentSection(all, ctx) {
   const section = el('section', { class: 'section' });
-  section.appendChild(el('div', { class: 'section-header' }, [el('h3', {}, '最近更新')]));
+  section.appendChild(el('div', { class: 'section-header' }, [el('h3', {}, '最近更新した顧客・案件')]));
 
   const records = [
     ...(all.clients || []).map((c) => ({ type: '顧客', name: displayName(c), updatedAt: c.updatedAt, href: `#/clients/${c.id}` })),
@@ -151,7 +265,7 @@ function buildRecentSection(all, ctx) {
   ]
     .filter((r) => r.updatedAt)
     .sort((a, b) => (b.updatedAt || '').localeCompare(a.updatedAt || ''))
-    .slice(0, 8);
+    .slice(0, 5);
 
   const list = el('ul', { class: 'list' });
   for (const r of records) {
@@ -166,11 +280,23 @@ function buildRecentSection(all, ctx) {
   return section;
 }
 
+// 要対応: 放置すると困るもの（PC: 他端末との競合・iPhoneからの取込待ち・旧データ移行、iPhone: 未書出しの変更）。
+// 該当がなければ何も表示しない（null を返す）。
 async function buildAttentionSection(ctx) {
-  const section = el('section', { class: 'section' });
-  section.appendChild(el('div', { class: 'section-header' }, [el('h3', {}, '要対応')]));
+  const section = el('section', { class: 'section section-attention' });
+  section.appendChild(el('div', { class: 'section-header' }, [el('h3', {}, '⚠ 要対応')]));
   const list = el('ul', { class: 'list' });
   let any = false;
+
+  if (ctx.caps.local && ctx.store.pendingChangesCount) {
+    try {
+      const n = await ctx.store.pendingChangesCount();
+      if (n > 0) {
+        any = true;
+        list.appendChild(el('li', { class: 'list-row' }, `この端末に、PCへ書き出していない変更が ${n} 件あります（同期 → Export）`));
+      }
+    } catch (e) { /* ignore */ }
+  }
 
   if (ctx.caps.conflicts) {
     try {
@@ -189,7 +315,7 @@ async function buildAttentionSection(ctx) {
       const n = (status && status.inboxCount) || 0;
       if (n > 0) {
         any = true;
-        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, `iPhoneからの取込待ちが ${n} 件あります`));
+        list.appendChild(el('li', { class: 'list-row' }, `iPhoneからの取込待ちが ${n} 件あります（同期 → Import）`));
       }
     } catch (e) { /* ignore */ }
   }
@@ -204,10 +330,7 @@ async function buildAttentionSection(ctx) {
     } catch (e) { /* ignore */ }
   }
 
-  if (!any) {
-    section.appendChild(el('p', { class: 'text-muted' }, '対応が必要な項目はありません'));
-  } else {
-    section.appendChild(list);
-  }
+  if (!any) return null;
+  section.appendChild(list);
   return section;
 }

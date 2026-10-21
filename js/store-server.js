@@ -173,6 +173,16 @@ export class ServerStore {
     return this._req('./api/mobile/import', { method: 'POST' });
   }
 
+  /** 自動バックアップの状況（最新のバックアップ日時など）。 */
+  async backupStatus() {
+    return this._req('./api/backup/status');
+  }
+
+  /** iPhone用の snapshot.json を今すぐ作り直す。 */
+  async regenerateSnapshot() {
+    return this._req('./api/mobile/snapshot', { method: 'POST' });
+  }
+
   async aiExtract(payload) {
     return this._req('./api/ai/extract', {
       method: 'POST',

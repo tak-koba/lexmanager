@@ -14,6 +14,7 @@ const ROUTES = [
   { pattern: /^#\/cases\/([^/]+)\/?$/, view: 'case-detail', params: (m) => ({ id: decodeURIComponent(m[1]) }) },
   { pattern: /^#\/todos\/?$/, view: 'todos', params: () => ({}) },
   { pattern: /^#\/tools\/?$/, view: 'tools', params: () => ({}) },
+  { pattern: /^#\/tools\/([^/]+)\/?$/, view: 'tools', params: (m) => ({ tool: decodeURIComponent(m[1]) }) },
   { pattern: /^#\/settings\/?$/, view: 'settings', params: () => ({}) },
   { pattern: /^#\/search(?:\?(.*))?$/, view: 'search', params: (m) => Object.fromEntries(new URLSearchParams(m[1] || '')) }
 ];
