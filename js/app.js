@@ -202,8 +202,35 @@ async function render({ force = false } = {}) {
     window.scrollTo(0, scrollY);
   } catch (err) {
     console.error('view load error', err);
-    viewRoot.innerHTML = `<div class="error-state">画面の読み込みに失敗しました: ${(err && err.message) || err}</div>`;
+    viewRoot.innerHTML = '';
+    const box = document.createElement('div');
+    box.className = 'error-state';
+    box.textContent = `画面の読み込みに失敗しました: ${(err && err.message) || err}`;
+    // 更新直後に新旧のファイルが混ざった場合などは、保存済みの画面ファイルを捨てて読み直せば直る
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn btn-primary';
+    retry.style.marginTop = '12px';
+    retry.textContent = '最新の画面を読み込み直す';
+    retry.addEventListener('click', reloadFresh);
+    box.appendChild(document.createElement('br'));
+    box.appendChild(retry);
+    viewRoot.appendChild(box);
   }
+}
+
+/** 保存済みの画面ファイル（Service Worker のキャッシュ）を消して読み直す。データ（IndexedDB）は消さない。 */
+async function reloadFresh() {
+  try {
+    if (window.caches) for (const k of await caches.keys()) await caches.delete(k);
+    if (navigator.serviceWorker) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) await reg.update().catch(() => {});
+    }
+  } catch (e) {
+    console.warn('cache clear failed', e);
+  }
+  location.reload();
 }
 let lastRenderedHash = null;
 let fromHash = null;
@@ -250,8 +277,24 @@ function wireSearch() {
 async function registerServiceWorkerIfNeeded() {
   if (!isLocalMode()) return;
   if (!('serviceWorker' in navigator)) return;
+  // 新しい版が有効になったら、画面を1回だけ読み直す（読み込み済みの古いファイルと新しいファイルを混ぜないため）。
+  // 未保存の入力があるときは読み直さず、次に開いたときに反映する。
+  if (navigator.serviceWorker.controller) {
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (reloaded) return;
+      const unsaved = hasDirtyForm() || (typeof state.currentUnsavedCheck === 'function' && state.currentUnsavedCheck());
+      if (unsaved) { showToast('アプリが更新されました。保存後に開き直すと反映されます', 'info'); return; }
+      reloaded = true;
+      location.reload();
+    });
+  }
   try {
-    await navigator.serviceWorker.register('./sw.js');
+    const reg = await navigator.serviceWorker.register('./sw.js');
+    // ホーム画面のアプリは開きっぱなしになりやすいので、前面に戻ったときにも更新を確認する
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
   } catch (e) {
     console.warn('service worker registration failed', e);
   }
