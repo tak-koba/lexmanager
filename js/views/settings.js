@@ -156,7 +156,34 @@ async function renderServerMode(container, ctx) {
     container.appendChild(migSection);
   }
 
-  // iPhoneとの同期はホームの［同期］（Import / Export）に一本化した
+  // iPhoneとのやり取り（ふだんは自動。ホームの［同期］でまとめて実行。ここは念のための手動操作）
+  if (ctx.caps.mobileImport) {
+    const mobSection = el('section', { class: 'section' });
+    mobSection.appendChild(el('h3', {}, 'iPhoneとのやり取り（手動）'));
+    mobSection.appendChild(el('p', { class: 'text-muted' },
+      'ふだんは自動です（iPhoneからの変更は1分ごとに取り込み、iPhone用のデータは保存のたびに作り直します）。ホームの［同期］でもまとめて実行できます。うまく反映されないときだけ使ってください。'));
+    try {
+      const st = await ctx.store.getMobileStatus();
+      mobSection.appendChild(el('p', {}, `取り込み待ち: ${(st && st.inboxCount) || 0}件 ／ iPhone用データの作成: ${st && st.snapshotAt ? String(st.snapshotAt).slice(0, 16).replace('T', ' ') : '未作成'}`));
+    } catch (e) { /* 状態が取れなくても操作はできる */ }
+    mobSection.appendChild(el('div', { class: 'field-row' }, [
+      el('button', { type: 'button', class: 'btn', onClick: async () => {
+        if (!(await confirmDialog('iPhoneからの変更（mobile/inbox）を今すぐ取り込みます。よろしいですか？'))) return;
+        try {
+          const r = await ctx.store.importMobile();
+          ctx.toast(`取込完了: 適用${r.applied || 0}件 / 統合${r.merged || 0}件 / 競合${r.conflicts || 0}件`, r.conflicts ? 'info' : 'success');
+        } catch (e) { ctx.toast('取込に失敗しました: ' + e.message, 'error'); }
+      } }, 'iPhoneからの変更を取り込む'),
+      el('button', { type: 'button', class: 'btn', onClick: async () => {
+        if (!(await confirmDialog('iPhone用のデータ（mobile/snapshot.json）を今すぐ作り直します。よろしいですか？'))) return;
+        try {
+          await ctx.store.regenerateSnapshot();
+          ctx.toast('iPhone用のデータを作り直しました', 'success');
+        } catch (e) { ctx.toast('作成に失敗しました: ' + e.message, 'error'); }
+      } }, 'iPhone用のデータを作り直す')
+    ]));
+    container.appendChild(mobSection);
+  }
 
   // 競合一覧
   if (ctx.caps.conflicts) {
@@ -407,6 +434,10 @@ async function buildOneDriveSection(ctx) {
 async function renderLocalMode(container, ctx) {
   const store = ctx.store;
   if (store.getOd) container.appendChild(await buildOneDriveSection(ctx));
+  container.appendChild(el('section', { class: 'section' }, [
+    el('h3', {}, 'Googleカレンダー連携'),
+    el('p', { class: 'text-muted' }, 'Googleカレンダーとの同期は事務所PCのLexManagerが行っています（設定もPC版の設定画面で行います）。iPhoneで「📅 カレンダー登録」を付けたToDoは、PCに届いたあとの同期で予定になります。')
+  ]));
 
   const loadSection = el('section', { class: 'section' });
   loadSection.appendChild(el('h3', {}, 'データの読込'));

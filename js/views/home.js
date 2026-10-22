@@ -27,11 +27,16 @@ export async function render(container, params, ctx) {
     el('button', { type: 'button', class: 'btn', title: 'Googleカレンダーを開く', onClick: openCalendar }, '📅 カレンダー')
   ]);
   const syncPanel = el('div', { class: 'sync-panel', hidden: true });
+  // ［同期］: PC と、OneDrive自動同期につないだiPhoneは押したらすぐ同期（確認なし）。
+  // OneDriveにつないでいないiPhoneだけ、従来どおり Import／Export を選ぶパネルを開く。
   const syncBtn = el('button', { type: 'button', class: 'btn btn-primary sync-btn', 'aria-expanded': 'false', onClick: async () => {
+    const rerender = () => render(container, params, ctx);
+    if (!ctx.caps.local) return syncNowPc(ctx, syncBtn, rerender);
+    if (ctx.autosync && ctx.autosync.connected()) return syncNowIphone(ctx, syncBtn, rerender);
     const open = syncPanel.hidden;
     syncPanel.hidden = !open;
     syncBtn.setAttribute('aria-expanded', String(open));
-    if (open) await fillSyncPanel(syncPanel, ctx, () => render(container, params, ctx));
+    if (open) await fillSyncPanel(syncPanel, ctx, rerender);
   } }, '⇅ 同期');
   quickRow.appendChild(syncBtn);
   container.appendChild(quickRow);
@@ -59,59 +64,93 @@ export async function render(container, params, ctx) {
   body.appendChild(buildRecentSection(all, ctx));
 }
 
-// ---------------- 同期（Import / Export） ----------------
-// PC: Import = iPhoneで書き出した変更（mobile/inbox）を取り込む、Export = iPhone用の snapshot.json を作り直す
-// iPhone: Import = PCのデータ（snapshot.json）を読み込む、Export = iPhoneでの変更を書き出す
+// ---------------- 同期（押したらすぐ） ----------------
+
+async function busy(btn, fn) {
+  const label = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⇅ 同期中…';
+  try { return await fn(); } finally { btn.disabled = false; btn.textContent = label; }
+}
+
+/** iPhone（OneDrive自動同期につないでいる）: その場で送受信 */
+async function syncNowIphone(ctx, btn, rerender) {
+  await busy(btn, () => ctx.autosync.run());
+  const s = ctx.store.getOd();
+  if (s.needLogin) {
+    if (await ctx.confirm('OneDriveのログインの期限が切れています。再ログインしますか？')) {
+      const { startLogin } = await import('../util/onedrive.js');
+      await startLogin(s.clientId);
+    }
+    return;
+  }
+  if (s.lastError) { ctx.toast(`同期に失敗しました: ${s.lastError}`, 'error'); return; }
+  ctx.toast(s.waiting ? `送信しました（PCの取り込み待ち ${s.waiting}件。PCが起動中なら1分以内に反映）` : '同期しました', 'success');
+  rerender();
+}
+
+/** PC: iPhoneからの変更の取り込み＋iPhone用データの作り直し＋Googleカレンダー同期（つないでいれば）をまとめて */
+async function syncNowPc(ctx, btn, rerender, force = false) {
+  const parts = [];
+  let failed = false;
+  await busy(btn, async () => {
+    try {
+      const st = ctx.store.getMobileStatus ? await ctx.store.getMobileStatus() : {};
+      if (st && st.inboxCount) {
+        const r = await ctx.store.importMobile();
+        parts.push(`iPhoneから取込${r.applied || 0}件${r.conflicts ? `（競合${r.conflicts}件）` : ''}`);
+      }
+      if (ctx.store.regenerateSnapshot) await ctx.store.regenerateSnapshot();
+    } catch (e) {
+      failed = true;
+      parts.push(`iPhoneとのやり取りに失敗: ${e.message}`);
+    }
+    try {
+      const g = ctx.store.gcalStatus ? await ctx.store.gcalStatus() : null;
+      if (g && g.connected && g.calendarId) {
+        const { result } = await ctx.store.gcalSync(force);
+        if (result.held && result.held.length && !force) {
+          const msg = result.held.map((h) => '・' + HELD_LABEL[h.kind](h.count)).join('\n');
+          if (await ctx.confirm(`Googleカレンダー: 件数が多いため、次の処理を止めています。実行してよいですか？\n${msg}`)) {
+            const again = await ctx.store.gcalSync(true);
+            parts.push(`Googleカレンダー: ${gcalSummary(again.result)}`);
+          } else {
+            parts.push('Googleカレンダー: 一部を保留');
+          }
+        } else {
+          parts.push(`Googleカレンダー: ${gcalSummary(result)}`);
+        }
+      }
+    } catch (e) {
+      failed = true;
+      parts.push(`Googleカレンダーの同期に失敗: ${e.message}`);
+    }
+  });
+  ctx.toast(`${failed ? '同期の一部に失敗しました' : '同期しました'}${parts.length ? `（${parts.join('／')}）` : ''}`, failed ? 'error' : 'success');
+  rerender();
+}
+
+// ---------------- 同期（OneDriveにつないでいないiPhone: Import / Export） ----------------
+// Import = PCのデータ（snapshot.json）を読み込む、Export = iPhoneでの変更を書き出す（PCは1分ごとに自動で取り込む）
 async function fillSyncPanel(panel, ctx, rerender) {
   clear(panel);
   const store = ctx.store;
-  const local = !!ctx.caps.local;
   const fmt = (iso) => (iso ? String(iso).slice(0, 16).replace('T', ' ') : '未実施');
-
   let status = {};
   try {
-    if (local) {
-      status.pending = store.pendingChangesCount ? await store.pendingChangesCount() : 0;
-      const meta = store.getSyncInfo ? store.getSyncInfo() : {};
-      status = { ...status, ...meta };
-    } else if (store.getMobileStatus) {
-      status = await store.getMobileStatus();
-    }
+    status.pending = store.pendingChangesCount ? await store.pendingChangesCount() : 0;
+    status = { ...status, ...(store.getSyncInfo ? store.getSyncInfo() : {}) };
   } catch (e) { /* 状態が取れなくても操作はできる */ }
-
   const card = (title, desc, info, onClick) => el('button', { type: 'button', class: 'sync-card', onClick }, [
     el('span', { class: 'sync-card-title' }, title),
     el('span', { class: 'sync-card-desc' }, desc),
     info ? el('span', { class: 'sync-card-info text-muted' }, info) : null
   ]);
-
-  if (local) {
-    const od = store.getOd ? store.getOd() : {};
-    if (od.clientId && od.refreshToken && ctx.autosync) {
-      panel.appendChild(card('自動同期（OneDrive）', od.needLogin ? '⚠ ログインの期限切れ。設定から再ログインしてください' : '今すぐ送受信します（ふだんは自動）',
-        `前回: ${fmt(od.lastSync)}${od.waiting ? ` ／ PCの取り込み待ち ${od.waiting}件` : ''}`, async () => {
-          await ctx.autosync.run();
-          const s = store.getOd();
-          ctx.toast(s.needLogin ? '再ログインが必要です' : s.lastError ? `同期に失敗しました: ${s.lastError}` : '同期しました', s.lastError || s.needLogin ? 'error' : 'success');
-          rerender();
-        }));
-    }
-    panel.appendChild(card('Import', 'PCのデータ（snapshot.json）を読み込み、この端末のデータを置き換えます',
-      `前回の読込: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
-    panel.appendChild(card('Export', 'この端末で変更した内容を書き出します（PCで取り込みます）',
-      `未書出しの変更: ${status.pending || 0}件 ／ 前回の書出し: ${fmt(status.lastExportAt)}`, () => iphoneExport(ctx, status.pending || 0, rerender)));
-  } else {
-    panel.appendChild(card('Import', 'iPhoneで書き出した変更（mobile/inbox）を取り込みます',
-      `取込待ち: ${status.inboxCount || 0}件`, () => pcImport(ctx, status.inboxCount || 0, rerender)));
-    panel.appendChild(card('Export', 'iPhone用のデータ（snapshot.json）を最新の内容で作り直します',
-      `前回の作成: ${fmt(status.snapshotAt)}`, () => pcExport(ctx, rerender)));
-    let g = null;
-    try { g = ctx.store.gcalStatus ? await ctx.store.gcalStatus() : null; } catch (e) { g = null; }
-    if (g && g.connected && g.calendarId) {
-      panel.appendChild(card('Googleカレンダー', `「${g.calendarName || 'カレンダー'}」とToDoを今すぐ同期します`,
-        `前回: ${fmt(g.lastRun)}${g.enabled ? '（このPCで10分ごとに自動同期）' : '（このPCは自動同期しない設定）'}`, () => gcalSyncNow(ctx, rerender)));
-    }
-  }
+  panel.appendChild(card('Import', 'PCのデータ（snapshot.json）を読み込み、この端末のデータを置き換えます',
+    `前回の読込: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
+  panel.appendChild(card('Export', 'この端末で変更した内容を書き出します（PCで取り込みます）',
+    `未書出しの変更: ${status.pending || 0}件 ／ 前回の書出し: ${fmt(status.lastExportAt)}`, () => iphoneExport(ctx, status.pending || 0, rerender)));
+  panel.appendChild(el('p', { class: 'text-muted' }, '設定 → OneDrive自動同期 につなぐと、この操作は不要になります。'));
 }
 
 function gcalSummary(r) {
@@ -129,46 +168,6 @@ const HELD_LABEL = {
   imports: (n) => `Googleの予定 ${n}件を、ToDoとして取り込みます`,
   deleteEvents: (n) => `LexManagerで削除・登録解除したToDoの予定 ${n}件を、Googleから削除します`
 };
-
-async function gcalSyncNow(ctx, rerender, force = false) {
-  if (!force && !(await ctx.confirm('Googleカレンダーと今すぐ同期します。よろしいですか？'))) return;
-  try {
-    const { result } = await ctx.store.gcalSync(force);
-    if (result.held && result.held.length) {
-      const msg = result.held.map((h) => '・' + HELD_LABEL[h.kind](h.count)).join('\n');
-      if (await ctx.confirm(`件数が多いため、次の処理を止めています。実行してよいですか？\n${msg}`)) return gcalSyncNow(ctx, rerender, true);
-    }
-    ctx.toast(`Googleカレンダー: ${gcalSummary(result)}${result.conflicts.length ? `（両方で変更された項目 ${result.conflicts.length}件はLexManagerの内容を残しました）` : ''}`,
-      result.errors.length ? 'error' : 'success');
-    rerender();
-  } catch (e) {
-    ctx.toast('Googleカレンダーの同期に失敗しました: ' + e.message, 'error');
-  }
-}
-
-async function pcImport(ctx, count, rerender) {
-  if (!count) {
-    if (!(await ctx.confirm('取込待ちのファイルはありません（OneDriveの同期が終わっていない可能性があります）。それでも取込を実行しますか？'))) return;
-  } else if (!(await ctx.confirm(`iPhoneからの変更 ${count}件を取り込みます。よろしいですか？`))) return;
-  try {
-    const res = await ctx.store.importMobile();
-    ctx.toast(`取込完了: 適用${res.applied || 0}件 / 統合${res.merged || 0}件 / 競合${res.conflicts || 0}件`, res.conflicts ? 'info' : 'success');
-    rerender();
-  } catch (e) {
-    ctx.toast('取込に失敗しました: ' + e.message, 'error');
-  }
-}
-
-async function pcExport(ctx, rerender) {
-  if (!(await ctx.confirm('iPhone用のデータ（LexManagerData/mobile/snapshot.json）を最新の内容で作り直します。よろしいですか？'))) return;
-  try {
-    await ctx.store.regenerateSnapshot();
-    ctx.toast('iPhone用のデータを作り直しました。OneDriveの同期後、iPhoneで Import してください', 'success');
-    rerender();
-  } catch (e) {
-    ctx.toast('作成に失敗しました: ' + e.message, 'error');
-  }
-}
 
 /** iPhoneの Import: 確認画面の中でファイルを選ぶ（iPhoneでは、ボタンを押した流れの中でないとファイル選択を開けないため）。 */
 async function iphoneImport(ctx, rerender) {
