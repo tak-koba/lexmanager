@@ -5,6 +5,25 @@ import { el } from './ui/dom.js';
 
 let current = null; // 表示中のロック画面 { promise }
 
+/** パスワードに使える文字: 半角の英数字と記号（空白・全角は不可） */
+export const PASSWORD_RE = /^[\x21-\x7E]+$/;
+export const PASSWORD_RULE = '半角の英数字と記号だけ使えます';
+
+/** パスワード欄を「半角英数字・記号だけ入力できる」ようにする（それ以外の文字は入力した時点で取り除く） */
+export function asciiPasswordInput(input, hintEl) {
+  input.setAttribute('autocapitalize', 'off');
+  input.setAttribute('autocorrect', 'off');
+  input.setAttribute('spellcheck', 'false');
+  input.addEventListener('input', () => {
+    const cleaned = input.value.replace(/[^\x21-\x7E]/g, '');
+    if (cleaned !== input.value) {
+      input.value = cleaned;
+      if (hintEl) hintEl.textContent = `パスワードは${PASSWORD_RULE}`;
+    }
+  });
+  return input;
+}
+
 export function isLockShown() {
   return !!current;
 }
@@ -13,18 +32,20 @@ export function isLockShown() {
  * ロック画面を出し、解除されたら resolve する。
  * verify(入力値) は true（解除）か、エラー文（文字列）を返す。
  */
-export function showLockScreen({ label = 'パスワード', message = '', verify }) {
+export function showLockScreen({ label = 'パスワード', message = '', verify, asciiOnly = true, onForgot = null }) {
   if (current) return current.promise;
   const input = el('input', { type: 'password', class: 'field', autocomplete: 'current-password', 'aria-label': label });
   const err = el('p', { class: 'text-error', 'aria-live': 'polite' });
   const submit = el('button', { type: 'submit', class: 'btn btn-primary' }, 'ロック解除');
+  if (asciiOnly) asciiPasswordInput(input, err);
   const form = el('form', { class: 'lock-form' }, [
     el('div', { class: 'lock-icon', 'aria-hidden': 'true' }, '🔒'),
     el('h2', {}, 'LexManager はロック中です'),
     message ? el('p', { class: 'text-muted' }, message) : null,
     el('label', {}, [label, input]),
     err,
-    submit
+    submit,
+    onForgot ? el('button', { type: 'button', class: 'btn-link lock-forgot', onClick: onForgot }, 'パスワードを忘れた場合') : null
   ]);
   const dlg = el('dialog', { class: 'lm-dialog lock-dialog' }, form);
   dlg.addEventListener('cancel', (e) => e.preventDefault()); // Escで閉じない

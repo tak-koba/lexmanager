@@ -3,7 +3,7 @@
 import { getStore } from './api.js';
 import { showToast } from './ui/toast.js';
 import { openDialog, confirmDialog } from './ui/dialog.js';
-import { showLockScreen, isLockShown, IdleWatcher } from './lock.js';
+import { showLockScreen, isLockShown, IdleWatcher, asciiPasswordInput } from './lock.js';
 
 const viewRoot = document.getElementById('view-root');
 
@@ -307,19 +307,22 @@ async function registerServiceWorkerIfNeeded() {
   }
 }
 
-// 合言葉で保護されたiPhone内データのロック解除
+// パスワードで保護されたiPhone内データのロック解除
 async function unlockLoop(store) {
   viewRoot.innerHTML = '';
   const box = document.createElement('form');
   box.className = 'section quick-form';
   box.style.maxWidth = '420px';
   box.style.margin = '40px auto';
-  box.innerHTML = '<h2>ロック解除</h2><p class="text-muted">この端末のLexManagerデータは合言葉で保護されています。</p>' +
-    '<label>合言葉<input type="password" autocomplete="current-password" required></label>' +
-    '<p class="text-error" aria-live="polite"></p><button class="btn btn-primary" type="submit">開く</button>';
+  box.innerHTML = '<h2>ロック解除</h2><p class="text-muted">この端末のLexManagerデータはパスワードで保護されています。</p>' +
+    '<label>パスワード<input type="password" autocomplete="current-password" required></label>' +
+    '<p class="text-error" aria-live="polite"></p><button class="btn btn-primary" type="submit">開く</button>' +
+    '<button class="btn-link lock-forgot" type="button">パスワードを忘れた場合</button>';
   viewRoot.appendChild(box);
+  box.querySelector('.lock-forgot').addEventListener('click', () => forgotIphonePassword(store));
   const input = box.querySelector('input');
   const msg = box.querySelector('.text-error');
+  if (store.passwordIsAscii && store.passwordIsAscii()) asciiPasswordInput(input, msg);
   input.focus();
   await new Promise((resolve) => {
     box.addEventListener('submit', async (e) => {
@@ -328,7 +331,7 @@ async function unlockLoop(store) {
       if (await store.unlock(input.value)) {
         resolve();
       } else {
-        msg.textContent = '合言葉が違います';
+        msg.textContent = 'パスワードが違います';
         input.select();
       }
     });
@@ -337,8 +340,27 @@ async function unlockLoop(store) {
 }
 
 // ---------------- 画面ロック（DESIGN.md §15） ----------------
-// PC: パスワード（サーバーで確認。ロック中はサーバーがデータを出さない）。iPhone: 合言葉（画面だけ隠し、同期は続ける）。
+// PC: パスワード（サーバーで確認。ロック中はサーバーがデータを出さない）。iPhone: パスワード（画面だけ隠し、同期は続ける）。
 let idleWatcher = null;
+
+/** PC版でパスワードを忘れたとき: このPCで解除用のファイルを実行してもらう（データには触れない） */
+function forgotPcPassword() {
+  const body = document.createElement('div');
+  body.innerHTML = '<p>このPCで、LexManagerのフォルダにある<strong>「LexManager-lock-reset.bat」</strong>をダブルクリックしてください。ロックが外れます（データは消えません）。</p>' +
+    '<p class="text-muted">フォルダ: C:\\Users\\（ユーザー名）\\ClaudeSessions\\DX\\lexmanager-app<br>（コマンドで行う場合: python -m lexmanager lock-reset）</p>' +
+    '<p>実行後、LexManagerの画面を開き直すと、パスワードなしで開けます。新しいパスワードは設定画面の「画面ロック」で設定してください。</p>';
+  openDialog({ title: 'パスワードを忘れた場合', bodyNode: body, actions: [{ label: '閉じる', primary: true }] });
+}
+
+/** iPhone版でパスワードを忘れたとき: この端末のデータを消して初期状態に戻す（PCのデータは残る） */
+async function forgotIphonePassword(store) {
+  const ok1 = await confirmDialog('パスワードは元に戻せないため、この端末のLexManagerのデータを消して初期状態に戻します。\n\n・PC（事務所PC）のデータは消えません。\n・初期化のあと、設定でOneDriveに接続し直すと、PCの最新データが読み込まれます（アプリケーションIDの入力からやり直しになります）。\n・この端末からPCにまだ送っていない変更は失われます。\n\n初期化しますか？', { okLabel: '初期化へ進む', danger: true });
+  if (!ok1) return;
+  const ok2 = await confirmDialog('本当に、この端末のLexManagerのデータを消しますか？（元に戻せません）', { okLabel: '消して初期化する', danger: true });
+  if (!ok2) return;
+  await store.resetDevice();
+  location.reload();
+}
 
 async function lockNow({ serverAlreadyLocked = false, rerender = serverAlreadyLocked } = {}) {
   if (isLockShown()) return;
@@ -347,6 +369,7 @@ async function lockNow({ serverAlreadyLocked = false, rerender = serverAlreadyLo
     if (!serverAlreadyLocked) { try { await store.lockScreen(); } catch (e) { /* 既にロック中 */ } }
     await showLockScreen({
       label: 'パスワード',
+      onForgot: forgotPcPassword,
       verify: async (pw) => {
         try { await store.unlockScreen(pw); return true; } catch (e) { return e.message; }
       }
@@ -354,8 +377,10 @@ async function lockNow({ serverAlreadyLocked = false, rerender = serverAlreadyLo
     if (rerender) render({ force: true }); // 読み込めなかった画面を読み直す
   } else {
     await showLockScreen({
-      label: '合言葉',
-      verify: async (pw) => ((await store.verifyPassphrase(pw)) ? true : '合言葉が違います')
+      label: 'パスワード',
+      asciiOnly: !!(store.passwordIsAscii && store.passwordIsAscii()),
+      onForgot: () => forgotIphonePassword(store),
+      verify: async (pw) => ((await store.verifyPassphrase(pw)) ? true : 'パスワードが違います')
     });
   }
   if (idleWatcher) idleWatcher.reset();

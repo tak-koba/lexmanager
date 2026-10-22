@@ -1,5 +1,6 @@
 // LexManager 4 - 設定（サーバーモード／ローカルモードで内容が分岐）
 import { el, clear } from '../ui/dom.js';
+import { asciiPasswordInput, PASSWORD_RULE } from '../lock.js';
 import { confirmDialog } from '../ui/dialog.js';
 
 export async function render(container, params, ctx) {
@@ -37,7 +38,8 @@ async function buildServerLockSection(ctx) {
     'パスワードを設定すると、LexManagerを開いたときと、一定時間操作がないときにロックします。ロック中も、iPhoneからの取り込み・Googleカレンダー同期・自動バックアップ・Thunderbirdアドオンとの連携は動き続けます。'));
   section.appendChild(el('p', {}, st.enabled ? '🔒 設定済み' : '未設定'));
 
-  const pw = (ph) => el('input', { type: 'password', class: 'field', placeholder: ph, autocomplete: 'new-password' });
+  const hint = el('p', { class: 'text-error', 'aria-live': 'polite' });
+  const pw = (ph) => asciiPasswordInput(el('input', { type: 'password', class: 'field', placeholder: ph, autocomplete: 'new-password' }), hint);
   const after = (r, msg) => { ctx.toast(msg, 'success'); ctx.lockConfigChanged(); ctx.navigate('#/settings'); return r; };
   const fail = (e) => ctx.toast(e.message, 'error');
 
@@ -70,6 +72,8 @@ async function buildServerLockSection(ctx) {
       el('button', { type: 'button', class: 'btn', onClick: () => ctx.lockNow() }, '今すぐロック')
     ]));
   }
+  section.appendChild(hint);
+  section.appendChild(el('p', { class: 'text-muted' }, `パスワードは${st.minLength}文字以上で、${PASSWORD_RULE}。`));
   section.appendChild(el('label', { class: 'field-row' }, ['操作がないとき自動でロック', autoLockSelect(st.autoLockMinutes, async (m) => {
     try { after(await store.configureLock({ autoLockMinutes: m }), '自動ロックの時間を変えました'); } catch (e) { fail(e); }
   })]));
@@ -589,9 +593,12 @@ async function renderLocalMode(container, ctx) {
   container.appendChild(manualSection);
 
   const passSection = el('section', { class: 'section' });
-  passSection.appendChild(el('h3', {}, '合言葉・ロック'));
-  const passInput = el('input', { type: 'password', class: 'field', placeholder: '合言葉' });
+  passSection.appendChild(el('h3', {}, 'パスワード・ロック'));
+  const passHint = el('p', { class: 'text-error', 'aria-live': 'polite' });
+  const passInput = asciiPasswordInput(el('input', { type: 'password', class: 'field', placeholder: '新しいパスワード（6文字以上）', autocomplete: 'new-password' }), passHint);
   passSection.appendChild(passInput);
+  passSection.appendChild(passHint);
+  passSection.appendChild(el('p', { class: 'text-muted' }, `6文字以上で、${PASSWORD_RULE}。設定すると、この端末内のデータが暗号化されます。`));
   passSection.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
     if (!store.setPassphrase) { ctx.toast('この端末では利用できません', 'error'); return; }
     try {
@@ -604,7 +611,7 @@ async function renderLocalMode(container, ctx) {
       ctx.toast('設定に失敗しました: ' + e.message, 'error');
     }
   } }, '設定'));
-  // 自動ロック（合言葉を設定しているときだけ。ロック中も、アプリを開いている間は同期を続ける）
+  // 自動ロック（パスワードを設定しているときだけ。ロック中も、アプリを開いている間は同期を続ける）
   if (store.getAutoLockMinutes && (await store.hasPassphrase())) {
     passSection.appendChild(el('label', { class: 'field-row', style: 'margin-top:8px' }, ['操作がないとき自動でロック', autoLockSelect(store.getAutoLockMinutes(), async (m) => {
       await store.setAutoLockMinutes(m);
@@ -613,7 +620,7 @@ async function renderLocalMode(container, ctx) {
     })]));
     passSection.appendChild(el('div', { class: 'toolbar' }, [el('button', { type: 'button', class: 'btn', onClick: () => ctx.lockNow() }, '今すぐロック')]));
   } else {
-    passSection.appendChild(el('p', { class: 'text-muted' }, '合言葉を設定すると、一定時間操作がないときの自動ロックも使えます。'));
+    passSection.appendChild(el('p', { class: 'text-muted' }, 'パスワードを設定すると、一定時間操作がないときの自動ロックも使えます。'));
   }
   container.appendChild(passSection);
 

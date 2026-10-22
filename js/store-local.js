@@ -4,7 +4,7 @@
 //   { records: {clients:{id:rec}, cases:{...}, todos:{...}},
 //     base:    同じ形（最後にPCデータを読み込んだ時点の内容。変更の書出しに使う）,
 //     snapshotStamp, snapshotAt, lastExportAt, lastExportSig, deviceName }
-// 合言葉を設定すると、状態全体（base を含む）を AES-GCM で暗号化して保存する。
+// パスワードを設定すると、状態全体（base を含む）を AES-GCM で暗号化して保存する。
 // データ量は小さい（数十〜数百件）ため、保存のたびに全体を書き込む単純な方式にしている。
 
 import { newId } from './model.js';
@@ -127,8 +127,9 @@ export class LocalStore {
       trash: false, conflicts: false, mobileImport: false, local: true
     };
     this._db = null;
-    this._key = null;       // 合言葉から作った鍵（ロック解除後のみ）
-    this._salt = null;      // 合言葉が設定されていれば salt
+    this._key = null;       // パスワードから作った鍵（ロック解除後のみ）
+    this._salt = null;      // パスワードが設定されていれば salt
+    this._asciiPw = false;  // 半角英数字・記号だけのパスワードか（2026.10.22.14 以降に設定したもの）
     this._state = null;     // ロック中は null
     this._changeCbs = [];
   }
@@ -140,7 +141,8 @@ export class LocalStore {
     const envelope = await kvGet(this._db, 'state');
     if (envelope && envelope.enc) {
       this._salt = envelope.salt;
-      this._state = null; // 合言葉入力待ち
+      this._asciiPw = !!envelope.ascii;
+      this._state = null; // パスワード入力待ち
     } else {
       this._state = Object.assign(emptyState(), envelope && envelope.plain ? envelope.plain : {});
     }
@@ -155,7 +157,7 @@ export class LocalStore {
     return !!this._salt;
   }
 
-  /** 合言葉でロック解除。成功で true。 */
+  /** パスワードでロック解除。成功で true。 */
   async unlock(pass) {
     const envelope = await kvGet(this._db, 'state');
     if (!envelope || !envelope.enc) return true;
@@ -170,7 +172,28 @@ export class LocalStore {
     }
   }
 
-  /** 合言葉が正しいか（自動ロックの解除用。データは読み込み済みのまま） */
+  /**
+   * パスワードを忘れたとき: この端末のLexManagerデータをすべて消して初期状態に戻す。
+   * PC（OneDrive上のデータ）は消えない。PCにまだ送っていない変更とOneDriveの接続設定は失われる。
+   */
+  async resetDevice() {
+    if (this._db) this._db.close();
+    this._db = null;
+    this._state = null;
+    await new Promise((resolve, reject) => {
+      const req = indexedDB.deleteDatabase(DB_NAME);
+      req.onsuccess = () => resolve();
+      req.onblocked = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  /** 入力欄を半角英数字・記号に制限してよいか（以前に全角を含む「合言葉」を設定した端末では制限しない） */
+  passwordIsAscii() {
+    return this._asciiPw;
+  }
+
+  /** パスワードが正しいか（自動ロックの解除用。データは読み込み済みのまま） */
   async verifyPassphrase(pass) {
     const envelope = await kvGet(this._db, 'state');
     if (!envelope || !envelope.enc) return true;
@@ -182,7 +205,7 @@ export class LocalStore {
     }
   }
 
-  /** 自動ロックまでの分数（0=しない）。合言葉を設定しているときだけ有効 */
+  /** 自動ロックまでの分数（0=しない）。パスワードを設定しているときだけ有効 */
   getAutoLockMinutes() {
     const m = this._state && this._state.autoLockMinutes;
     return typeof m === 'number' ? m : 10;
@@ -194,14 +217,16 @@ export class LocalStore {
     await this._persist();
   }
 
-  /** 合言葉を設定・変更する。空文字なら暗号化を解除する。 */
+  /** パスワードを設定・変更する。空文字なら暗号化を解除する。 */
   async setPassphrase(pass) {
     this._requireUnlocked();
     if (!pass) {
       this._key = null;
       this._salt = null;
     } else {
-      if (pass.length < 6) throw new Error('合言葉は6文字以上にしてください');
+      if (pass.length < 6) throw new Error('パスワードは6文字以上にしてください');
+      if (!/^[\x21-\x7E]+$/.test(pass)) throw new Error('パスワードは半角の英数字と記号だけ使えます（空白・全角は使えません）');
+      this._asciiPw = true;
       this._salt = toB64(crypto.getRandomValues(new Uint8Array(16)));
       this._key = await deriveKey(pass, this._salt);
     }
@@ -210,14 +235,14 @@ export class LocalStore {
 
   async _persist() {
     if (this._key) {
-      await kvPut(this._db, 'state', { salt: this._salt, enc: await encryptJson(this._key, this._state) });
+      await kvPut(this._db, 'state', { salt: this._salt, ascii: this._asciiPw, enc: await encryptJson(this._key, this._state) });
     } else {
       await kvPut(this._db, 'state', { plain: this._state });
     }
   }
 
   _requireUnlocked() {
-    if (!this._state) throw new Error('合言葉を入力してロックを解除してください');
+    if (!this._state) throw new Error('パスワードを入力してロックを解除してください');
   }
 
   async meta() {
@@ -392,7 +417,7 @@ export class LocalStore {
       : { snapshotAt: '', lastExportAt: '' };
   }
 
-  // ---------- OneDrive自動同期の設定・状態（端末内に保存。合言葉があれば暗号化される） ----------
+  // ---------- OneDrive自動同期の設定・状態（端末内に保存。パスワードがあれば暗号化される） ----------
   // {clientId, root, accessToken, accessExpiresAt, refreshToken, uploads:[{name,at}], lastSentAt, snapshotModified,
   //  lastSync, lastError, needLogin, waiting}
 
