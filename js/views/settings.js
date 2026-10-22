@@ -77,7 +77,7 @@ async function renderServerMode(container, ctx) {
   // LANアクセス
   const lanSection = el('section', { class: 'section' });
   lanSection.appendChild(el('h3', {}, 'LANアクセス'));
-  lanSection.appendChild(el('p', { class: 'text-muted' }, 'オンにすると、同じネットワーク（事務所のWi-Fi等）にある他の端末のブラウザから、このPCのLexManagerを開けるようになります（表示されるトークンが必要）。iPhoneは同期（Import／Export）で使えるため、通常はオフのままで構いません。'));
+  lanSection.appendChild(el('p', { class: 'text-muted' }, 'オンにすると、同じネットワーク（事務所のWi-Fi等）にある他の端末のブラウザから、このPCのLexManagerを開けるようになります（表示されるトークンが必要）。iPhoneはOneDrive経由で同期するため、通常はオフのままで構いません。'));
   const lanCheckbox = el('input', { type: 'checkbox', checked: !!settings.lanAccess });
   lanSection.appendChild(el('label', { class: 'field-row' }, [lanCheckbox, 'LANアクセスを許可する']));
   if (settings.lanAccess && settings.lanToken) {
@@ -448,10 +448,12 @@ async function renderLocalMode(container, ctx) {
     el('p', {}, gcalStatusText(store.getGcalStatus ? store.getGcalStatus() : null))
   ]));
 
-  const loadSection = el('section', { class: 'section' });
-  loadSection.appendChild(el('h3', {}, 'データの読込'));
-  loadSection.appendChild(el('p', { class: 'text-muted' }, 'PCから書き出した snapshot.json を選択してください'));
-  const fileInput = el('input', { type: 'file', accept: 'application/json' });
+  // 手動のやり取り（OneDrive自動同期を使っていれば通常は不要）
+  const manualSection = el('section', { class: 'section' });
+  const odOn = !!(store.getOd && store.getOd().refreshToken);
+  manualSection.appendChild(el('h3', {}, odOn ? 'PCとのやり取り（手動・通常は不要）' : 'PCとのやり取り（手動）'));
+  manualSection.appendChild(el('p', { class: 'text-muted' }, '読込: PCが作った snapshot.json を選ぶ／書出し: この端末の変更をファイルにして、OneDriveの mobile/inbox に保存'));
+  const fileInput = el('input', { type: 'file', accept: 'application/json', hidden: true });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file || !store.importSnapshot) return;
@@ -469,17 +471,14 @@ async function renderLocalMode(container, ctx) {
       ctx.toast('読込に失敗しました: ' + e.message, 'error');
     }
   });
-  loadSection.appendChild(fileInput);
-  container.appendChild(loadSection);
-
-  const exportSection = el('section', { class: 'section' });
-  exportSection.appendChild(el('h3', {}, '変更の書出し'));
   let pending = 0;
   try {
     pending = (store.pendingChangesCount && await store.pendingChangesCount()) || 0;
   } catch (e) { /* ignore */ }
-  exportSection.appendChild(el('p', { class: 'text-muted' }, `未書出しの変更: ${pending} 件`));
-  exportSection.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
+  manualSection.appendChild(fileInput);
+  const manualRow = el('div', { class: 'toolbar' });
+  manualRow.appendChild(el('button', { type: 'button', class: 'btn', onClick: () => fileInput.click() }, 'PCのデータを読み込む'));
+  manualRow.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
     if (!store.exportChanges) { ctx.toast('この端末では利用できません', 'error'); return; }
     try {
       const r = await store.exportChanges();
@@ -488,8 +487,9 @@ async function renderLocalMode(container, ctx) {
     } catch (e) {
       ctx.toast('書出しに失敗しました: ' + e.message, 'error');
     }
-  } }, '書き出す'));
-  container.appendChild(exportSection);
+  } }, `変更を書き出す（${pending}件）`));
+  manualSection.appendChild(manualRow);
+  container.appendChild(manualSection);
 
   const passSection = el('section', { class: 'section' });
   passSection.appendChild(el('h3', {}, '合言葉の設定・変更'));
@@ -527,7 +527,7 @@ async function renderLocalMode(container, ctx) {
 
   const deviceSection = el('section', { class: 'section' });
   deviceSection.appendChild(el('h3', {}, '端末名'));
-  const deviceInput = el('input', { type: 'text', class: 'field' });
+  const deviceInput = el('input', { type: 'text', class: 'field', value: store.getDeviceName ? store.getDeviceName() : '' });
   deviceSection.appendChild(deviceInput);
   deviceSection.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
     if (!store.setDeviceName) { ctx.toast('この端末では利用できません', 'error'); return; }

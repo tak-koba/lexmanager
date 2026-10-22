@@ -106,9 +106,11 @@ export async function render(container, params, ctx) {
       const list = el('ul', { class: 'list' });
       for (const t of todoMatches) {
         list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate(t.caseId ? `#/cases/${t.caseId}` : '#/todos') }, [
-          renderDeadlineBadge(t.deadline),
-          el('span', {}, todoTaskText(t)),
-          (t.requester || t.caseLabel) ? el('span', { class: 'text-muted' }, [t.caseLabel, t.requester].filter(Boolean).join(' ／ ')) : null
+          el('div', { class: 'row-main' }, [
+            t.done ? el('span', { class: 'chip' }, '完了') : renderDeadlineBadge(t.deadline),
+            el('span', {}, todoTaskText(t)),
+            (t.requester || t.caseLabel) ? el('span', { class: 'text-muted' }, [t.caseLabel, t.requester].filter(Boolean).join(' ／ ')) : null
+          ])
         ]));
       }
       resultsBox.appendChild(list);

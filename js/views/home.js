@@ -4,6 +4,7 @@ import {
   renderDeadlineBadge, displayName, sortByKana, kanaName,
   quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar, todoTaskText
 } from './_shared.js';
+import { formatDateTime } from '../ui/dates.js';
 
 export async function render(container, params, ctx) {
   clear(container);
@@ -228,8 +229,7 @@ function buildDeadlineSection(cases, ctx) {
   const list = el('ul', { class: 'list' });
   for (const c of sorted) {
     const row = el('li', { class: 'list-row', onClick: () => ctx.navigate(`#/cases/${c.id}`) }, [
-      renderDeadlineBadge(c.nextDate),
-      el('span', {}, c.caseName || '(無題の案件)')
+      el('div', { class: 'row-main' }, [renderDeadlineBadge(c.nextDate), el('span', {}, c.caseName || '(無題の案件)')])
     ]);
     list.appendChild(row);
   }
@@ -265,7 +265,7 @@ function buildTodoSection(todos, ctx) {
   }
   section.appendChild(el('div', { class: 'stat-row' }, [
     el('span', { class: 'chip' }, `超過 ${overdue}`),
-    el('span', { class: 'chip' }, `今日 ${today}`),
+    el('span', { class: 'chip' }, `本日 ${today}`),
     el('span', { class: 'chip' }, `今週 ${week}`),
     el('span', { class: 'chip' }, `期限なし ${none}`)
   ]));
@@ -290,10 +290,9 @@ function buildTodoSection(todos, ctx) {
         }
       }
     });
-    const row = el('li', { class: 'list-row' }, [
+    const row = el('li', { class: 'list-row', onClick: () => ctx.navigate('#/todos') }, [
       cb,
-      renderDeadlineBadge(t.deadline),
-      el('span', { onClick: () => ctx.navigate('#/todos') }, todoTaskText(t))
+      el('div', { class: 'row-main' }, [renderDeadlineBadge(t.deadline), el('span', {}, todoTaskText(t))])
     ]);
     list.appendChild(row);
   }
@@ -319,8 +318,10 @@ function buildRecentSection(all, ctx) {
   for (const r of records) {
     list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate(r.href) }, [
       el('span', { class: 'chip' }, r.type),
-      el('span', {}, r.name),
-      el('span', { class: 'text-muted' }, r.updatedAt ? r.updatedAt.slice(0, 16).replace('T', ' ') : '')
+      el('div', { class: 'row-main row-main-stack' }, [
+        el('span', {}, r.name),
+        el('span', { class: 'text-muted' }, formatDateTime(r.updatedAt.slice(0, 16)))
+      ])
     ]));
   }
   section.appendChild(list);

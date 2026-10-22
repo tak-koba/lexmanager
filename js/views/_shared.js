@@ -605,6 +605,16 @@ export function todoTaskText(t) {
   return (t.task || '').trim() || String(t.title || '').split(/\r?\n/).find((s) => s.trim()) || '(無題)';
 }
 
+/** 一覧に出す詳細: 1行目がタスクと同じ（タスクを詳細の1行目から作った場合）はその行を除く。タスクがなければ見出しに使うので出さない */
+function todoDetailText(t) {
+  const task = (t.task || '').trim();
+  if (!task || !t.title) return '';
+  const lines = String(t.title).split(/\r?\n/);
+  const first = lines.findIndex((s) => s.trim());
+  if (first >= 0 && lines[first].trim() === task) lines.splice(0, first + 1);
+  return lines.join('\n').trim();
+}
+
 /** 閲覧用のToDo1行（タスクを太字、詳細をその下に1行だけ。詳細はクリックで全体表示）。showCase で案件の列を出す。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
 export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged, onEdit, editDisabled = false } = {}) {
   const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
@@ -621,12 +631,13 @@ export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, on
   const client = t.clientId && clientById ? clientById.get(t.clientId) : null;
   const caseObj = showCase && t.caseId && caseById ? caseById.get(t.caseId) : null;
   const caseText = showCase ? (caseObj ? caseObj.caseName : t.caseLabel) : '';
-  const deadline = t.deadline ? (renderDeadlineBadge(t.deadline) || el('span', { class: 'text-muted' }, formatTodoDeadline(t.deadline))) : el('span', { class: 'text-muted' }, '期限なし');
-  const detail = t.task && t.title && t.title.trim() !== t.task.trim()
+  const deadline = t.deadline ? ((!t.done && renderDeadlineBadge(t.deadline)) || el('span', { class: 'text-muted' }, formatTodoDeadline(t.deadline))) : el('span', { class: 'text-muted' }, '期限なし');
+  const detailText = todoDetailText(t);
+  const detail = detailText
     ? el('div', { class: 'todo-item-detail text-muted', title: 'クリックで全体を表示／1行に戻す', onClick: (e) => {
       if (e.target.closest('a') || String(window.getSelection && window.getSelection()) !== '') return; // リンク・文字選択の邪魔をしない
       e.currentTarget.classList.toggle('todo-detail-open');
-    } }, t.title)
+    } }, detailText)
     : null;
   return el('div', { class: ['todo-item', showCase ? 'todo-item-wc' : '', t.done ? 'todo-done' : ''] }, [
     el('div', { class: 'todo-item-check' }, cb),
