@@ -209,14 +209,40 @@ async function renderServerMode(container, ctx) {
       if (!items.length) {
         box.appendChild(el('p', { class: 'text-muted' }, '競合はありません'));
       }
+      const COLL_LABEL = { clients: '顧客', cases: '案件', todos: 'ToDo' };
+      const nameOf = (r) => (r && (r.caseName || r.task || r.title || r.companyName || [r.lastName, r.firstName].filter(Boolean).join(' '))) || '';
+      const resolveWith = async (item, choice, record) => {
+        try {
+          await ctx.store.resolveConflict({ kind: item.kind, coll: item.coll, id: item.id, path: item.path, choice, record });
+          ctx.toast('解決しました', 'success');
+          render(container, {}, ctx);
+        } catch (e) {
+          ctx.toast('解決に失敗しました: ' + e.message, 'error');
+        }
+      };
+      // 項目ごとの選択ではなく「どちらを残すか」を選ぶ種類（iPhoneからの取込で起きるもの）
+      const SPECIAL = {
+        '*deleted-on-pc*': { text: 'PCで削除済みのデータを、iPhoneで編集していました。', buttons: [['削除のままにする', 'current'], ['iPhoneの内容で復元する', 'other']] },
+        '*delete*': { text: 'iPhoneで削除しましたが、PCで先に変更されていました。', buttons: [['PCの内容を残す', 'current'], ['削除する', 'delete']] },
+        '*new-vs-existing*': { text: '同じデータがPCに既にありました。', buttons: [['PCの内容を残す', 'current'], ['iPhoneの内容で上書きする', 'other']] }
+      };
       for (const item of items) {
         const itemBox = el('div', { class: 'section-sub' });
-        itemBox.appendChild(el('p', {}, `${item.kind} / ${item.coll} / ${item.id}`));
+        const label = `${COLL_LABEL[item.coll] || item.coll}「${nameOf(item.current) || nameOf(item.other) || item.id}」`;
+        itemBox.appendChild(el('p', {}, el('strong', {}, label)));
+        const special = item.kind === 'mobile' && (item.fields || []).map((f) => SPECIAL[f]).find(Boolean);
+        if (special) {
+          itemBox.appendChild(el('p', { class: 'text-muted' }, special.text));
+          itemBox.appendChild(el('div', { class: 'toolbar' }, special.buttons.map(([text, choice]) =>
+            el('button', { type: 'button', class: choice === 'delete' ? 'btn btn-danger' : 'btn', onClick: () => resolveWith(item, choice) }, text))));
+          box.appendChild(itemBox);
+          continue;
+        }
         const fieldChoices = {};
         for (const f of item.fields || []) {
           const sel = el('select', { class: 'field' }, [
-            el('option', { value: 'current' }, `現在: ${JSON.stringify(item.current && item.current[f])}`),
-            el('option', { value: 'other' }, `他方: ${JSON.stringify(item.other && item.other[f])}`)
+            el('option', { value: 'current' }, `${item.kind === 'mobile' ? 'PCの値' : '現在'}: ${JSON.stringify(item.current && item.current[f])}`),
+            el('option', { value: 'other' }, `${item.kind === 'mobile' ? 'iPhoneの値' : '他方'}: ${JSON.stringify(item.other && item.other[f])}`)
           ]);
           fieldChoices[f] = sel;
           itemBox.appendChild(el('label', {}, [f, sel]));
@@ -224,13 +250,7 @@ async function renderServerMode(container, ctx) {
         itemBox.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
           const choice = {};
           for (const f of Object.keys(fieldChoices)) choice[f] = fieldChoices[f].value;
-          try {
-            await ctx.store.resolveConflict({ kind: item.kind, coll: item.coll, id: item.id, path: item.path, choice: 'merged', record: choice });
-            ctx.toast('解決しました', 'success');
-            render(container, {}, ctx);
-          } catch (e) {
-            ctx.toast('解決に失敗しました: ' + e.message, 'error');
-          }
+          await resolveWith(item, 'merged', choice);
         } }, 'この内容で解決'));
         box.appendChild(itemBox);
       }
