@@ -311,6 +311,7 @@ export class LocalStore {
     this._state.base = clone(next);
     this._state.snapshotStamp = snap.stamp || '';
     this._state.snapshotAt = snap.exportedAt || nowIso();
+    this._state.gcalStatus = snap.gcal || null; // PCのGoogleカレンダー連携の状態（表示用）
     this._state.lastExportSig = '';
     await this._persist();
     this._notifyChange();
@@ -353,6 +354,12 @@ export class LocalStore {
     const changes = this._computeChanges();
     if (!changes.length) return false;
     return JSON.stringify(changes) !== this._state.lastExportSig;
+  }
+
+  /** PCのGoogleカレンダー連携の状態（OneDriveから直接読んだもの → なければPCデータに含まれていたもの） */
+  getGcalStatus() {
+    const od = this.getOd();
+    return od.gcal || (this._state && this._state.gcalStatus) || null;
   }
 
   getSyncInfo() {

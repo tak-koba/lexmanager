@@ -605,7 +605,7 @@ export function todoTaskText(t) {
   return (t.task || '').trim() || String(t.title || '').split(/\r?\n/).find((s) => s.trim()) || '(無題)';
 }
 
-/** 閲覧用のToDo1行（タスクを太字、詳細をその下に）。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
+/** 閲覧用のToDo1行（タスクを太字、詳細をその下に1行だけ。詳細はクリックで全体表示）。showCase で案件の列を出す。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
 export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged, onEdit, editDisabled = false } = {}) {
   const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
     try {
@@ -622,16 +622,25 @@ export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, on
   const caseObj = showCase && t.caseId && caseById ? caseById.get(t.caseId) : null;
   const caseText = showCase ? (caseObj ? caseObj.caseName : t.caseLabel) : '';
   const deadline = t.deadline ? (renderDeadlineBadge(t.deadline) || el('span', { class: 'text-muted' }, formatTodoDeadline(t.deadline))) : el('span', { class: 'text-muted' }, '期限なし');
-  return el('div', { class: ['todo-item', t.done ? 'todo-done' : ''] }, [
+  const detail = t.task && t.title && t.title.trim() !== t.task.trim()
+    ? el('div', { class: 'todo-item-detail text-muted', title: 'クリックで全体を表示／1行に戻す', onClick: (e) => {
+      if (e.target.closest('a') || String(window.getSelection && window.getSelection()) !== '') return; // リンク・文字選択の邪魔をしない
+      e.currentTarget.classList.toggle('todo-detail-open');
+    } }, t.title)
+    : null;
+  return el('div', { class: ['todo-item', showCase ? 'todo-item-wc' : '', t.done ? 'todo-done' : ''] }, [
     el('div', { class: 'todo-item-check' }, cb),
     el('div', { class: 'todo-item-deadline' }, deadline),
     el('div', { class: 'todo-item-requester' }, requester
       ? (client ? el('a', { href: `#/clients/${client.id}` }, requester) : el('span', {}, requester))
       : el('span', { class: 'text-muted todo-empty' }, '依頼者なし')),
+    showCase ? el('div', { class: 'todo-item-case' }, caseText
+      ? (caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, caseText) : el('span', {}, caseText))
+      : el('span', { class: 'text-muted todo-empty' }, '案件なし')) : null,
     el('div', { class: 'todo-item-body' }, [
       el('div', { class: 'todo-item-title' }, [t.calendar ? el('span', { class: 'todo-cal', title: 'Googleカレンダーに登録' }, '📅 ') : null, todoTaskText(t)]),
-      t.task && t.title && t.title.trim() !== t.task.trim() ? el('div', { class: 'todo-item-detail text-muted' }, t.title) : null,
-      caseText ? el('div', { class: 'todo-sub text-muted' }, caseObj ? el('a', { href: `#/cases/${caseObj.id}` }, `案件: ${caseText}`) : `案件: ${caseText}`) : null,
+      detail,
+
       todoMailLine(t),
       t.notes ? el('div', { class: 'todo-sub text-muted todo-notes' }, `📝 ${t.notes}`) : null
     ]),

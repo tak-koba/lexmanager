@@ -94,6 +94,11 @@ export class AutoSync {
         await this.store.setOd({ snapshotModified: snap.lastModifiedDateTime });
         result.imported = true;
       }
+      // PCのGoogleカレンダー連携の状態（設定画面の表示用。読めなくても同期は成功扱い）
+      try {
+        const g = await getItem(token, itemPath(root, 'gcal/status.json'));
+        if (g) await this.store.setOd({ gcal: JSON.parse(await downloadText(g)) });
+      } catch (e) { /* 表示用なので無視 */ }
       await this.store.setOd({ lastSync: new Date().toISOString(), lastError: '', waiting: uploads.length });
     } catch (e) {
       const needLogin = e instanceof ReauthError;

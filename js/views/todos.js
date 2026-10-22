@@ -179,8 +179,10 @@ export async function render(container, params, ctx) {
       section.appendChild(editor.node);
     } else {
       const list = el('div', { class: 'todo-items' });
-      list.appendChild(el('div', { class: 'todo-item todo-item-header', 'aria-hidden': 'true' }, [
-        el('div', {}, '完了'), el('div', {}, '期限'), el('div', {}, '依頼者'), el('div', {}, 'タスク・詳細')
+      list.appendChild(el('div', { class: 'todo-item todo-item-wc todo-item-header', 'aria-hidden': 'true' }, [
+        el('div', { class: 'todo-item-check' }, '完了'), el('div', { class: 'todo-item-deadline' }, '期限'),
+        el('div', { class: 'todo-item-requester' }, '依頼者'), el('div', { class: 'todo-item-case' }, '案件'),
+        el('div', { class: 'todo-item-body' }, 'タスク・詳細')
       ]));
       for (const t of g.items) {
         if (editingKey === `item:${t.id}`) {
@@ -194,7 +196,7 @@ export async function render(container, params, ctx) {
           ]));
           continue;
         }
-        list.appendChild(todoViewRow(ctx, t, { caseById, clientById, onEdit: () => startItemEdit(t), editDisabled: !!editingKey,
+        list.appendChild(todoViewRow(ctx, t, { caseById, clientById, showCase: true, onEdit: () => startItemEdit(t), editDisabled: !!editingKey,
           onChanged: (saved) => {
             const i = todos.findIndex((x) => x.id === saved.id);
             if (i >= 0) todos[i] = saved;

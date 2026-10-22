@@ -384,6 +384,16 @@ async function buildGcalSection(ctx) {
   return section;
 }
 
+/** PC（事務所PC）のGoogleカレンダー連携が動いているか（PCが同期のたびに書く gcal/status.json による。30分以内なら動作中） */
+function gcalStatusText(s) {
+  if (!s || !s.at) return '情報なし';
+  const when = new Date(s.at).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (s.reauth) return `⚠ 停止中（事務所PCでGoogleへの再ログインが必要。前回 ${when}）`;
+  if (!s.ok) return `⚠ エラーで停止中（前回 ${when}）`;
+  if (Date.now() - new Date(s.at).getTime() <= 30 * 60 * 1000) return `✅ 動作中（前回の同期 ${when}）`;
+  return `⚠ 止まっています（前回の同期 ${when}。事務所PCのLexManagerが起動していない可能性）`;
+}
+
 /** iPhone版: OneDrive自動同期（DESIGN.md §14。準備は docs/onedrive-setup.md） */
 async function buildOneDriveSection(ctx) {
   const store = ctx.store;
@@ -393,8 +403,7 @@ async function buildOneDriveSection(ctx) {
   const fmt = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
   const connected = !!(od.clientId && od.refreshToken);
   section.appendChild(el('h3', {}, 'OneDrive自動同期'));
-  section.appendChild(el('p', { class: 'text-muted' },
-    'オンにすると、この端末の変更は保存の数秒後にOneDriveへ送られ、PCが1分以内に取り込みます。PCのデータも開いたとき・5分ごとに自動で読み込みます（この端末の未送信の変更があるときは、送り終えるまで読み込みません）。Microsoftの決まりで、ログインは24時間で切れます（再ログインは通常ボタン1つ）。'));
+  section.appendChild(el('p', { class: 'text-muted' }, '変更は自動でPCへ送られ、PCの最新データも自動で読み込みます。ログインは24時間ごとに切れます（再ログインはボタン1つ）。'));
   const status = connected
     ? (od.needLogin ? '⚠ 再ログインが必要です' : `✅ 接続中${od.lastSync ? `（前回の同期 ${fmt(od.lastSync)}${od.waiting ? `、PCの取り込み待ち ${od.waiting}件` : ''}）` : ''}`)
     : '未接続';
@@ -436,7 +445,7 @@ async function renderLocalMode(container, ctx) {
   if (store.getOd) container.appendChild(await buildOneDriveSection(ctx));
   container.appendChild(el('section', { class: 'section' }, [
     el('h3', {}, 'Googleカレンダー連携'),
-    el('p', { class: 'text-muted' }, 'Googleカレンダーとの同期は事務所PCのLexManagerが行っています（設定もPC版の設定画面で行います）。iPhoneで「📅 カレンダー登録」を付けたToDoは、PCに届いたあとの同期で予定になります。')
+    el('p', {}, gcalStatusText(store.getGcalStatus ? store.getGcalStatus() : null))
   ]));
 
   const loadSection = el('section', { class: 'section' });
