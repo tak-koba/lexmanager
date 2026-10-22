@@ -137,7 +137,14 @@ export async function render(container, params, ctx) {
       const first = (g) => (g.items[0] && g.items[0].deadline) || '9999';
       entries.sort((a, b) => first(a).localeCompare(first(b)));
     }
-    for (const g of entries) listBox.appendChild(renderGroup(g));
+    const board = el('div', { class: 'todo-board' });
+    board.appendChild(el('div', { class: 'todo-item todo-item-wc todo-item-header', 'aria-hidden': 'true' }, [
+      el('div', { class: 'todo-item-check' }, '完了'), el('div', { class: 'todo-item-deadline' }, '期限'),
+      el('div', { class: 'todo-item-requester' }, '依頼者'), el('div', { class: 'todo-item-case' }, '案件'),
+      el('div', { class: 'todo-item-body' }, 'タスク・詳細')
+    ]));
+    for (const g of entries) board.appendChild(renderGroup(g));
+    listBox.appendChild(board);
   }
 
   function groupInfo(key) {
@@ -179,11 +186,6 @@ export async function render(container, params, ctx) {
       section.appendChild(editor.node);
     } else {
       const list = el('div', { class: 'todo-items' });
-      list.appendChild(el('div', { class: 'todo-item todo-item-wc todo-item-header', 'aria-hidden': 'true' }, [
-        el('div', { class: 'todo-item-check' }, '完了'), el('div', { class: 'todo-item-deadline' }, '期限'),
-        el('div', { class: 'todo-item-requester' }, '依頼者'), el('div', { class: 'todo-item-case' }, '案件'),
-        el('div', { class: 'todo-item-body' }, 'タスク・詳細')
-      ]));
       for (const t of g.items) {
         if (editingKey === `item:${t.id}`) {
           // 1件だけの編集（行の位置で入力欄に切り替える）

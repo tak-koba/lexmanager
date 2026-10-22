@@ -255,6 +255,20 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
   box-shadow: var(--shadow); padding: 10px 14px; margin-bottom: 12px;
 }
 .todo-group-editing { border-color: var(--warn); }
+/* 詳細画面の一番下の削除ボタン（誤操作を避けるため上から離す） */
+.danger-zone { display: flex; justify-content: flex-end; margin: 8px 0 24px; padding-top: 12px; border-top: 1px dashed var(--border); }
+/* 設定の目次 */
+.settings-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
+.section { scroll-margin-top: calc(var(--header-h) + 12px); }
+/* ToDo一覧: 全体を1枚の枠にし、列見出しは先頭に1回だけ。案件ごとの見出しは細い帯 */
+.todo-board { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; }
+.todo-board > .todo-item-header { padding: 6px 14px; border-bottom: 1px solid var(--border); }
+.todo-board .todo-group { background: none; border: 0; border-radius: 0; box-shadow: none; margin: 0; padding: 0 14px; }
+.todo-board .todo-group + .todo-group { border-top: 1px solid var(--border); }
+.todo-board .todo-group-head { background: var(--surface-2); margin: 0 -14px; padding: 4px 14px; min-height: 40px; }
+.todo-board .todo-group-title { font-size: 13.5px; }
+.todo-board .todo-group-editing { box-shadow: inset 3px 0 0 var(--warn); }
+.todo-board .todo-group-editing > .todo-editor, .todo-board .todo-group > .todo-editor { padding: 10px 0; }
 .todo-group-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px 10px; padding: 2px 0 6px; }
 .todo-group-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; min-width: 0; }
 .todo-group-title { font-weight: 700; font-size: 15px; overflow-wrap: anywhere; }
@@ -467,7 +481,8 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inh
   .edit-bar.editing { top: calc(var(--header-h) + env(safe-area-inset-top) + 6px); }
   .edit-bar { min-height: 44px; }
   /* 絞込チップは1行で横スクロール（縦の場所を取らない） */
-  .chip-row { gap: 6px; flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px 10px; padding: 0 12px 2px; scrollbar-width: none; }
+  .chip-row { gap: 6px; flex-wrap: nowrap; overflow-x: auto; margin: 0 -12px 10px; padding: 0 28px 2px 12px; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
   .chip-row::-webkit-scrollbar { display: none; }
   .chip-group { flex: none; flex-wrap: nowrap; }
   /* ToDo追加: 内容を入力し始めたら期限・案件の欄を出す */
@@ -495,7 +510,7 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inh
   }
   .todo-item-case { font-size: 13px; color: var(--text-2); }
   .todo-item-case::before { content: "案件: "; }
-  .todo-item-case:has(.todo-empty) { display: none; }
+  .todo-item-case:has(.todo-empty), .todo-board .todo-item-case { display: none; }
   .todo-group { padding: 10px 12px; }
   .todo-ed-fields { grid-template-columns: 1fr; }
   .todo-add-sub > input[type="date"] { flex: 1 1 9em; }

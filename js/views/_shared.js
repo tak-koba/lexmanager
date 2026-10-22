@@ -543,7 +543,7 @@ export async function saveRecord(ctx, coll, base, payload) {
 }
 
 /** レコード削除ボタン（サーバーモードではごみ箱へ移動し、ツール画面から復元できる）。 */
-export function deleteRecordButton(ctx, coll, getRecord, label, afterHash, note = '') {
+export function deleteRecordButton(ctx, coll, getRecord, label, afterHash, note = '', text = '削除') {
   return el('button', {
     type: 'button', class: 'btn btn-small btn-danger',
     onClick: async () => {
@@ -559,7 +559,7 @@ export function deleteRecordButton(ctx, coll, getRecord, label, afterHash, note 
         ctx.toast('削除できませんでした: ' + e.message, 'error');
       }
     }
-  }, '削除');
+  }, text);
 }
 
 /** 日付＋任意の時刻の入力欄。get() は 'YYYY-MM-DD' / 'YYYY-MM-DDTHH:MM' / '' を返す。 */

@@ -91,6 +91,14 @@ export async function render(container, params, ctx) {
       root.appendChild(buildFilesSection());
     }
     root.appendChild(buildNotesSection());
+    // 削除は誤操作を避けるため画面の一番下に（閲覧中のみ）
+    if (!editMode) {
+      const related = (all.cases || []).filter((k) => (k.clientIds || []).includes(record.id));
+      root.appendChild(el('div', { class: 'danger-zone' }, [
+        deleteRecordButton(ctx, 'clients', () => record, displayName(record) || 'この顧客', '#/clients',
+          related.length ? `この顧客は${related.length}件の案件の依頼者に登録されています。案件側の依頼者表示は「(不明)」になります。` : '', 'この顧客を削除')
+      ]));
+    }
   }
 
   async function saveAll() {
@@ -119,11 +127,7 @@ export async function render(container, params, ctx) {
         record.isArchived ? el('span', { class: 'chip' }, 'アーカイブ') : null,
         ...(record.tags || []).map((t) => el('span', { class: 'chip' }, t))
       ]));
-      const related = (all.cases || []).filter((k) => (k.clientIds || []).includes(record.id));
-      section.appendChild(el('div', { class: 'field-row', style: 'margin-top:8px' }, [
-        deleteRecordButton(ctx, 'clients', () => record, displayName(record) || 'この顧客', '#/clients',
-          related.length ? `この顧客は${related.length}件の案件の依頼者に登録されています。案件側の依頼者表示は「(不明)」になります。` : '')
-      ]));
+
     }
 
     function edit() {

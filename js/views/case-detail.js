@@ -90,6 +90,14 @@ export async function render(container, params, ctx) {
     root.appendChild(buildTodoSection());
     root.appendChild(buildMinutesSection());
     root.appendChild(buildNotesSection());
+    // 削除は誤操作を避けるため画面の一番下に（閲覧中のみ）
+    if (!editMode) {
+      const caseTodos = (all.todos || []).filter((t) => t.caseId === record.id);
+      root.appendChild(el('div', { class: 'danger-zone' }, [
+        deleteRecordButton(ctx, 'cases', () => record, record.caseName || 'この案件', '#/cases',
+          caseTodos.length ? `この案件のToDo ${caseTodos.length}件は残ります（関連案件なしのToDoになります）。` : '', 'この案件を削除')
+      ]));
+    }
   }
 
   async function saveAll() {
@@ -125,11 +133,6 @@ export async function render(container, params, ctx) {
         el('span', { class: 'chip' }, record.caseType === 'court' ? '裁判所案件' : '顧客案件'),
         record.isArchived ? el('span', { class: 'chip' }, '終了') : null,
         renderDeadlineBadge(record.nextDate)
-      ]));
-      const caseTodos = (all.todos || []).filter((t) => t.caseId === record.id);
-      section.appendChild(el('div', { class: 'field-row', style: 'margin-top:8px' }, [
-        deleteRecordButton(ctx, 'cases', () => record, record.caseName || 'この案件', '#/cases',
-          caseTodos.length ? `この案件のToDo ${caseTodos.length}件は残ります（関連案件なしのToDoになります）。` : '')
       ]));
     }
 

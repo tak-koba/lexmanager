@@ -8,9 +8,21 @@ export async function render(container, params, ctx) {
 
   if (ctx.caps.ai || ctx.caps.trash || ctx.caps.update || ctx.caps.migrate || ctx.caps.mobileImport || ctx.caps.conflicts) {
     await renderServerMode(container, ctx);
+    addToc(container);
   } else {
     await renderLocalMode(container, ctx);
   }
+}
+
+/** PC版の設定は項目が多いので、先頭に目次（押すとその欄へ移動）を付ける */
+function addToc(container) {
+  const sections = [...container.querySelectorAll(':scope > section.section')]
+    .map((s) => ({ s, h: s.querySelector('h3') })).filter((x) => x.h);
+  if (sections.length < 4) return;
+  const toc = el('nav', { class: 'settings-toc', 'aria-label': '設定の目次' }, sections.map(({ s, h }) =>
+    el('button', { type: 'button', class: 'btn btn-small', onClick: () => s.scrollIntoView({ behavior: 'smooth', block: 'start' }) }, h.textContent)));
+  const title = container.querySelector(':scope > .view-title');
+  if (title) title.after(toc); else container.prepend(toc);
 }
 
 async function renderServerMode(container, ctx) {
