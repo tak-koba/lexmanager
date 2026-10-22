@@ -83,6 +83,8 @@ function buildCtx() {
     },
     openDialog: (opts) => openDialog(opts),
     getData: () => state.data,
+    // iPhone版のOneDrive自動同期（未接続・PC版では null）
+    get autosync() { return state.autosync || null; },
     refresh: async () => {
       await refreshData();
       return state.data;
@@ -330,6 +332,35 @@ async function unlockLoop(store) {
   viewRoot.innerHTML = '';
 }
 
+/**
+ * iPhone版のOneDrive自動同期を始める（DESIGN.md §14）。Microsoftのログイン画面から戻ったところなら、先にログインを仕上げる。
+ * 同期するのは: 開いたとき・保存の数秒後・前面に戻ったとき・5分ごと。
+ */
+async function startAutoSync(store) {
+  const [{ AutoSync }, od] = await Promise.all([import('./autosync.js'), import('./util/onedrive.js')]);
+  const cb = od.pendingCallback();
+  if (cb) {
+    try {
+      const tok = await od.finishLogin(cb);
+      await store.setOd({ ...tok, needLogin: false, lastError: '' });
+      showToast('OneDriveに接続しました。自動同期を始めます', 'success');
+    } catch (e) {
+      showToast(String(e.message || e), 'error');
+    }
+  }
+  const sync = new AutoSync(store, {
+    onStatus: (s, r) => {
+      if (r && r.imported) showToast('PCの最新データを読み込みました', 'info');
+      if (s.needLogin) document.dispatchEvent(new CustomEvent('lm-sync-status'));
+    }
+  });
+  state.autosync = sync;
+  store.onChange(() => sync.soon());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') sync.soon(500); });
+  setInterval(() => { if (document.visibilityState === 'visible') sync.run(); }, 5 * 60 * 1000);
+  sync.soon(1000);
+}
+
 async function bootstrap() {
   viewRoot.innerHTML = '<div class="loading-state">読み込み中...</div>';
   wireNav();
@@ -365,6 +396,7 @@ async function bootstrap() {
   }
 
   await registerServiceWorkerIfNeeded();
+  if (state.store.getOd) await startAutoSync(state.store);
 
   window.addEventListener('hashchange', render);
   if (!location.hash) {

@@ -86,6 +86,16 @@ async function fillSyncPanel(panel, ctx, rerender) {
   ]);
 
   if (local) {
+    const od = store.getOd ? store.getOd() : {};
+    if (od.clientId && od.refreshToken && ctx.autosync) {
+      panel.appendChild(card('自動同期（OneDrive）', od.needLogin ? '⚠ ログインの期限切れ。設定から再ログインしてください' : '今すぐ送受信します（ふだんは自動）',
+        `前回: ${fmt(od.lastSync)}${od.waiting ? ` ／ PCの取り込み待ち ${od.waiting}件` : ''}`, async () => {
+          await ctx.autosync.run();
+          const s = store.getOd();
+          ctx.toast(s.needLogin ? '再ログインが必要です' : s.lastError ? `同期に失敗しました: ${s.lastError}` : '同期しました', s.lastError || s.needLogin ? 'error' : 'success');
+          rerender();
+        }));
+    }
     panel.appendChild(card('Import', 'PCのデータ（snapshot.json）を読み込み、この端末のデータを置き換えます',
       `前回の読込: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
     panel.appendChild(card('Export', 'この端末で変更した内容を書き出します（PCで取り込みます）',
@@ -327,7 +337,21 @@ async function buildAttentionSection(ctx) {
   const list = el('ul', { class: 'list' });
   let any = false;
 
-  if (ctx.caps.local && ctx.store.pendingChangesCount) {
+  // iPhone版のOneDrive自動同期: ログインが切れていたら、ここからボタン1つで再ログイン
+  const od = ctx.store.getOd ? ctx.store.getOd() : {};
+  const autoOn = !!(od.clientId && od.refreshToken);
+  if (autoOn && od.needLogin) {
+    any = true;
+    list.appendChild(el('li', { class: 'list-row' }, [
+      el('span', {}, 'OneDrive自動同期: ログインの期限が切れました'),
+      el('button', { type: 'button', class: 'btn btn-primary btn-small', onClick: async () => {
+        const { startLogin } = await import('../util/onedrive.js');
+        await startLogin(od.clientId);
+      } }, '再ログイン')
+    ]));
+  }
+
+  if (ctx.caps.local && ctx.store.pendingChangesCount && !(autoOn && !od.needLogin)) {
     try {
       const n = await ctx.store.pendingChangesCount();
       if (n > 0) {

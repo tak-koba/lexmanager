@@ -381,7 +381,7 @@ button.chip:hover { color: var(--text); }
 .edu-adjust select { width: auto; }
 @media (max-width: 767px) {
   .edu-row { grid-template-columns: 1fr; }
-  .quick-actions > .sync-btn { margin-left: 0; flex: 1 1 100%; }
+  .quick-actions > .sync-btn { margin-left: 0; }
   .sync-panel { margin-top: -8px; }
 }
 

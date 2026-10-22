@@ -361,7 +361,29 @@ export class LocalStore {
       : { snapshotAt: '', lastExportAt: '' };
   }
 
-  async exportChanges() {
+  // ---------- OneDrive自動同期の設定・状態（端末内に保存。合言葉があれば暗号化される） ----------
+  // {clientId, root, accessToken, accessExpiresAt, refreshToken, uploads:[{name,at}], lastSentAt, snapshotModified,
+  //  lastSync, lastError, needLogin, waiting}
+
+  getOd() {
+    return (this._state && this._state.od) || {};
+  }
+
+  async setOd(patch) {
+    this._requireUnlocked();
+    this._state.od = { ...(this._state.od || {}), ...patch };
+    await this._persist();
+  }
+
+  async clearOd() {
+    this._requireUnlocked();
+    const keep = this._state.od || {};
+    this._state.od = { clientId: keep.clientId, root: keep.root };
+    await this._persist();
+  }
+
+  /** 前回PCデータを読み込んで以降の変更を、PCが取り込む形式にする（書き出しはしない）。 */
+  exportPayload() {
     const changes = this._computeChanges();
     if (!changes.length) throw new Error('書き出す変更はありません');
     const payload = {
@@ -373,6 +395,20 @@ export class LocalStore {
     const p = (n) => String(n).padStart(2, '0');
     const safeDevice = this._state.deviceName.replace(/[^A-Za-z0-9_-]/g, '') || 'iPhone';
     const filename = `lexmanager-changes-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}-${safeDevice}.json`;
+    return { payload, filename, count: changes.length, sig: JSON.stringify(changes) };
+  }
+
+  /** exportPayload の内容を書き出し済みとして記録する */
+  async markExported(ex) {
+    this._state.lastExportAt = ex.payload.exportedAt;
+    this._state.lastExportSig = ex.sig;
+    await this._persist();
+  }
+
+  async exportChanges() {
+    const ex = this.exportPayload();
+    const { payload, filename } = ex;
+    const changes = payload.changes;
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
 
     let method = 'download';

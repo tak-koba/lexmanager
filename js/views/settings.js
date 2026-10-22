@@ -357,8 +357,56 @@ async function buildGcalSection(ctx) {
   return section;
 }
 
+/** iPhone版: OneDrive自動同期（DESIGN.md §14。準備は docs/onedrive-setup.md） */
+async function buildOneDriveSection(ctx) {
+  const store = ctx.store;
+  const { startLogin, DEFAULT_ROOT } = await import('../util/onedrive.js');
+  const section = el('section', { class: 'section' });
+  const od = store.getOd();
+  const fmt = (iso) => (iso ? new Date(iso).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '');
+  const connected = !!(od.clientId && od.refreshToken);
+  section.appendChild(el('h3', {}, 'OneDrive自動同期'));
+  section.appendChild(el('p', { class: 'text-muted' },
+    'オンにすると、この端末の変更は保存の数秒後にOneDriveへ送られ、PCが1分以内に取り込みます。PCのデータも開いたとき・5分ごとに自動で読み込みます（この端末の未送信の変更があるときは、送り終えるまで読み込みません）。Microsoftの決まりで、ログインは24時間で切れます（再ログインは通常ボタン1つ）。'));
+  const status = connected
+    ? (od.needLogin ? '⚠ 再ログインが必要です' : `✅ 接続中${od.lastSync ? `（前回の同期 ${fmt(od.lastSync)}${od.waiting ? `、PCの取り込み待ち ${od.waiting}件` : ''}）` : ''}`)
+    : '未接続';
+  section.appendChild(el('p', {}, status));
+  if (od.lastError) section.appendChild(el('p', { class: 'text-error' }, `前回のエラー: ${od.lastError}`));
+
+  const idInput = el('input', { type: 'text', class: 'field', value: od.clientId || '', placeholder: 'アプリケーション（クライアント）ID' });
+  const rootInput = el('input', { type: 'text', class: 'field', value: od.root || DEFAULT_ROOT });
+  section.appendChild(el('label', {}, ['アプリケーション（クライアント）ID（Azureで登録したもの）', idInput]));
+  section.appendChild(el('label', {}, ['OneDrive上のデータフォルダ', rootInput]));
+  section.appendChild(el('div', { class: 'field-row' }, [
+    el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
+      const id = idInput.value.trim();
+      if (!/^[0-9a-f-]{36}$/i.test(id)) { ctx.toast('アプリケーション（クライアント）IDを正しく入力してください', 'error'); return; }
+      await store.setOd({ clientId: id, root: rootInput.value.trim() || DEFAULT_ROOT });
+      await startLogin(id);
+    } }, connected ? 'Microsoftに再ログイン' : 'Microsoftでログイン'),
+    connected ? el('button', { type: 'button', class: 'btn', onClick: async () => {
+      if (!ctx.autosync) return;
+      ctx.toast('同期しています…', 'info');
+      const r = await ctx.autosync.run();
+      const s = store.getOd();
+      if (s.needLogin) ctx.toast('再ログインが必要です', 'error');
+      else if (s.lastError) ctx.toast(`同期に失敗しました: ${s.lastError}`, 'error');
+      else ctx.toast(`同期しました${r && r.sent ? `（${r.sent}件を送信）` : ''}${r && r.imported ? '（PCのデータを読み込み）' : ''}`, 'success');
+      ctx.navigate('#/settings');
+    } }, '今すぐ同期') : null,
+    connected ? el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
+      if (!(await ctx.confirm('OneDriveとの接続を解除します（この端末のデータは消えません。以後は手動の同期になります）。よろしいですか？'))) return;
+      await store.clearOd();
+      ctx.navigate('#/settings');
+    } }, '接続を解除') : null
+  ]));
+  return section;
+}
+
 async function renderLocalMode(container, ctx) {
   const store = ctx.store;
+  if (store.getOd) container.appendChild(await buildOneDriveSection(ctx));
 
   const loadSection = el('section', { class: 'section' });
   loadSection.appendChild(el('h3', {}, 'データの読込'));

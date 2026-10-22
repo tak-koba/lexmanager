@@ -6,7 +6,7 @@
 // APP_SHELL には web/ の全ファイルを載せる（オフラインでも全画面を開けるように）。漏れは tests/test_sw_shell.py で検出する。
 
 // 名前に版番号を入れる（lexmanager/version.py の APP_VERSION と一致させる。tests/test_sw_shell.py で確認）
-const CACHE_NAME = 'lexmanager-shell-2026.10.22.3';
+const CACHE_NAME = 'lexmanager-shell-2026.10.22.4';
 const NETWORK_TIMEOUT_MS = 4000;
 const APP_SHELL = [
   './',
@@ -16,6 +16,7 @@ const APP_SHELL = [
   './css/app.css',
   './js/app.js',
   './js/api.js',
+  './js/autosync.js',
   './js/model.js',
   './js/store-server.js',
   './js/store-local.js',
@@ -28,6 +29,7 @@ const APP_SHELL = [
   './js/util/calendar.js',
   './js/util/gengo.js',
   './js/util/kana.js',
+  './js/util/onedrive.js',
   './js/util/slots.js',
   './js/util/suggest.js',
   './js/util/zip.js',
