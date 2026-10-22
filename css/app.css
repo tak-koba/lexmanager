@@ -445,6 +445,23 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inh
   .two-pane:not(.has-detail) .pane-detail { display: none; }
   .pane-list { position: static; max-height: none; overflow: visible; }
   .back-link { display: inline-flex; }
+  /* ToDo: タブレット・スマホ幅では内容を上に、期限・依頼者を下に。列見出しは出さない（列に並べると窮屈なため） */
+  .todo-item-header { display: none; }
+  .todo-item {
+    grid-template-columns: 2.25em auto 1fr auto;
+    grid-template-areas: "check body body act" ". deadline requester requester";
+    padding: 10px 0;
+  }
+  .todo-item-requester { font-size: 13px; color: var(--text-2); align-self: center; }
+  .todo-item-requester::before { content: "依頼: "; }
+  .todo-item-requester:has(.todo-empty) { display: none; }
+  .todo-item.todo-item-wc {
+    grid-template-columns: 2.25em auto 1fr auto;
+    grid-template-areas: "check body body act" ". deadline requester requester" ". case case case";
+  }
+  .todo-item-case { font-size: 13px; color: var(--text-2); }
+  .todo-item-case::before { content: "案件: "; }
+  .todo-item-case:has(.todo-empty), .todo-board .todo-item-case { display: none; }
 }
 
 /* ---------- スマホ幅 ---------- */
@@ -494,23 +511,6 @@ pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-family: inh
   .todo-add-sub > .btn { order: 1; flex: 0 0 auto; }
   button.chip { min-height: 36px; padding: 1px 12px; }
 
-  /* ToDo: 内容を上に、期限・依頼者を下に。列見出しは出さない */
-  .todo-item-header { display: none; }
-  .todo-item {
-    grid-template-columns: 2.25em auto 1fr auto;
-    grid-template-areas: "check body body act" ". deadline requester requester";
-    padding: 10px 0;
-  }
-  .todo-item-requester { font-size: 13px; color: var(--text-2); align-self: center; }
-  .todo-item-requester::before { content: "依頼: "; }
-  .todo-item-requester:has(.todo-empty) { display: none; }
-  .todo-item.todo-item-wc {
-    grid-template-columns: 2.25em auto 1fr auto;
-    grid-template-areas: "check body body act" ". deadline requester requester" ". case case case";
-  }
-  .todo-item-case { font-size: 13px; color: var(--text-2); }
-  .todo-item-case::before { content: "案件: "; }
-  .todo-item-case:has(.todo-empty), .todo-board .todo-item-case { display: none; }
   .todo-group { padding: 10px 12px; }
   .todo-ed-fields { grid-template-columns: 1fr; }
   .todo-add-sub > input[type="date"] { flex: 1 1 9em; }
