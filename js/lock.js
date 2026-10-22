@@ -30,12 +30,12 @@ export function asciiPasswordInput(input, hintEl) {
  */
 export function showRecoveryCodeDialog(code, { normalize, deviceLabel = 'このiPhone' } = {}) {
   return new Promise((resolve) => {
-    const dlg = el('dialog', { class: 'lm-dialog recovery-dialog' });
+    const dlg = el('dialog', { class: 'lm-dialog recovery-dialog', 'aria-labelledby': 'lm-recovery-title' });
     dlg.addEventListener('cancel', (e) => e.preventDefault());
     const done = (v) => { dlg.close(); dlg.remove(); resolve(v); };
     const body = el('div', { class: 'lm-dialog-body' });
     const footer = el('div', { class: 'lm-dialog-footer' });
-    dlg.appendChild(el('div', { class: 'lm-dialog-header' }, [el('div', { class: 'lm-dialog-title' }, '復旧コード（まだ有効になっていません）')]));
+    dlg.appendChild(el('div', { class: 'lm-dialog-header' }, [el('div', { class: 'lm-dialog-title', id: 'lm-recovery-title' }, '復旧コード（まだ有効になっていません）')]));
     dlg.appendChild(body);
     dlg.appendChild(footer);
 
@@ -47,6 +47,7 @@ export function showRecoveryCodeDialog(code, { normalize, deviceLabel = 'このi
       );
       const copyBtn = el('button', { type: 'button', class: 'btn', onClick: async () => {
         try { await navigator.clipboard.writeText(code); copyBtn.textContent = 'コピーしました'; } catch (e) { copyBtn.textContent = 'コピーできませんでした（手で書き写してください）'; }
+        setTimeout(() => { copyBtn.textContent = 'コピー'; }, 3000); // 数秒で元の表示に戻す（もう一度押せると分かるように）
       } }, 'コピー');
       footer.replaceChildren(
         el('button', { type: 'button', class: 'btn', onClick: () => done(false) }, 'やめる（何も変更しない）'),
@@ -94,7 +95,7 @@ export function showLockScreen({ label = 'パスワード', message = '', verify
   if (asciiOnly) asciiPasswordInput(input, err);
   const form = el('form', { class: 'lock-form' }, [
     el('div', { class: 'lock-icon', 'aria-hidden': 'true' }, '🔒'),
-    el('h2', {}, 'LexManager はロック中です'),
+    el('h2', { id: 'lm-lock-title' }, 'LexManagerはロック中です'),
     message ? el('p', { class: 'text-muted' }, message) : null,
     el('label', {}, [label, input]),
     err,
@@ -103,7 +104,7 @@ export function showLockScreen({ label = 'パスワード', message = '', verify
     onForgot ? el('button', { type: 'button', class: 'btn-link lock-forgot', onClick: async () => { if ((await onForgot()) === true) finish(); } }, 'パスワードを忘れた場合') : null
   ]);
   let finish = () => {};
-  const dlg = el('dialog', { class: 'lm-dialog lock-dialog' }, form);
+  const dlg = el('dialog', { class: 'lm-dialog lock-dialog', 'aria-labelledby': 'lm-lock-title' }, form);
   dlg.addEventListener('cancel', (e) => e.preventDefault()); // Escで閉じない
   document.body.appendChild(dlg);
   dlg.showModal();

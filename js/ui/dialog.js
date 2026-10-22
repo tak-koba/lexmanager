@@ -1,6 +1,8 @@
 // web/js/ui/dialog.js
 // ネイティブ <dialog> を使ったモーダル。依存なし。
 
+let dialogSeq = 0; // 見出しの id を重ならないようにする連番
+
 /**
  * @param {object} opts
  * @param {string} opts.title
@@ -20,6 +22,9 @@ export function openDialog({ title, bodyNode, actions = [], onClose } = {}) {
   const titleEl = document.createElement('h2');
   titleEl.className = 'lm-dialog-title';
   titleEl.textContent = title || '';
+  // 読み上げソフトがダイアログの名前として見出しを読むように結び付ける
+  titleEl.id = `lm-dialog-title-${++dialogSeq}`;
+  dialogEl.setAttribute('aria-labelledby', titleEl.id);
   header.appendChild(titleEl);
 
   const closeBtn = document.createElement('button');
@@ -104,7 +109,7 @@ export function confirmDialog(message, { okLabel = 'OK', cancelLabel = 'キャ�
   return new Promise((resolve) => {
     const bodyNode = document.createElement('p');
     bodyNode.textContent = message;
-  bodyNode.style.whiteSpace = 'pre-line'; // 確認文の改行をそのまま表示する
+    bodyNode.style.whiteSpace = 'pre-line'; // 確認文の改行をそのまま表示する
 
     let resolved = false;
     const finish = (value) => {

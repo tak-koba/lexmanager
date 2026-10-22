@@ -9,7 +9,7 @@ export async function render(container, params, ctx) {
 
   const initialQ = (params && params.q) || parseQFromHash();
 
-  const input = el('input', { type: 'search', class: 'field search-input', placeholder: '氏名・会社名・電話・メール・住所・案件名・相手方・裁判所・メモ本文で検索', value: initialQ || '' });
+  const input = el('input', { type: 'search', class: 'field search-input', placeholder: '氏名・会社名・電話・メール・住所・案件名・相手方・裁判所・メモ本文で検索', value: initialQ || '', 'aria-label': '検索する言葉' });
   container.appendChild(input);
 
   const resultsBox = el('div', { class: 'list-box' });

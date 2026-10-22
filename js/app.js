@@ -74,7 +74,8 @@ function buildCtx() {
     store: state.store,
     caps: state.store.capabilities,
     toast: (msg, type) => showToast(msg, type),
-    confirm: (msg) => confirmDialog(msg),
+    // 確認ダイアログ。opts = {okLabel:'削除する', danger:true} 等（ボタンの文言で何が起きるか分かるようにする）
+    confirm: (msg, opts) => confirmDialog(msg, opts),
     navigate: (hash) => {
       if (location.hash === hash) {
         render();
@@ -105,7 +106,7 @@ function buildCtx() {
       async check() {
         const custom = typeof state.currentUnsavedCheck === 'function' && state.currentUnsavedCheck();
         if (!custom && !hasDirtyForm()) return true;
-        return confirmDialog('保存されていない変更があります。移動しますか？');
+        return confirmDialog('保存されていない変更があります。移動しますか？（入力した内容は失われます）', { okLabel: '移動する' });
       }
     }
   };
@@ -314,9 +315,10 @@ async function unlockLoop(store) {
   box.className = 'section quick-form';
   box.style.maxWidth = '420px';
   box.style.margin = '40px auto';
-  box.innerHTML = '<h2>ロック解除</h2><p class="text-muted">この端末のLexManagerデータはパスワードで保護されています。</p>' +
+  // 見出し・ボタンは自動ロックの画面（lock.js showLockScreen）とそろえる
+  box.innerHTML = '<h2>LexManagerはロック中です</h2><p class="text-muted">この端末のLexManagerデータはパスワードで保護されています。</p>' +
     '<label>パスワード<input type="password" autocomplete="current-password" required></label>' +
-    '<p class="text-error" aria-live="polite"></p><button class="btn btn-primary" type="submit">開く</button>' +
+    '<p class="text-error" aria-live="polite"></p><button class="btn btn-primary" type="submit">ロック解除</button>' +
     '<button class="btn-link lock-forgot" type="button">パスワードを忘れた場合</button>';
   viewRoot.appendChild(box);
   const input = box.querySelector('input');
@@ -328,7 +330,7 @@ async function unlockLoop(store) {
     box.querySelector('.lock-forgot').addEventListener('click', async () => { if ((await forgotIphonePassword(store)) === true) resolve(); });
     box.addEventListener('submit', async (e) => {
       e.preventDefault();
-      msg.textContent = '確認中...';
+      msg.textContent = '確認しています…';
       if (await store.unlock(input.value)) {
         resolve();
       } else {
@@ -466,6 +468,36 @@ async function lockNow({ serverAlreadyLocked = false, rerender = serverAlreadyLo
   if (idleWatcher) idleWatcher.reset();
 }
 
+/**
+ * iPhone版: 同じ端末の別の画面（タブ）での変更を知らせる（store-local.js の BroadcastChannel）。
+ * 古い内容のまま保存すると拒否されるため、開き直してもらう。
+ */
+function watchOtherTabs(store) {
+  if (!store.onExternalChange) return;
+  let shown = false;
+  store.onExternalChange((msg) => {
+    if (shown) return;
+    if (msg.type === 'key-changed') {
+      shown = true;
+      const body = document.createElement('p');
+      body.textContent = '別の画面でパスワード（または暗号化の設定）が変更されました。この画面のままでは保存できないため、開き直してください。';
+      openDialog({
+        title: '開き直してください',
+        bodyNode: body,
+        actions: [
+          { label: 'あとで', onClick: () => { shown = false; } },
+          { label: '開き直す', primary: true, onClick: () => location.reload() }
+        ],
+        onClose: () => { shown = false; }
+      });
+    } else if (msg.type === 'saved') {
+      shown = true;
+      showToast('別の画面でデータが更新されました。開き直してください（このままでは保存できません）', 'error');
+      setTimeout(() => { shown = false; }, 8000);
+    }
+  });
+}
+
 /** 自動ロックの準備（起動時と、設定を変えたとき） */
 async function setupLock() {
   const store = state.store;
@@ -517,7 +549,7 @@ async function startAutoSync(store) {
 }
 
 async function bootstrap() {
-  viewRoot.innerHTML = '<div class="loading-state">読み込み中...</div>';
+  viewRoot.innerHTML = '<div class="loading-state">読み込み中…</div>';
   wireNav();
   wireSearch();
 
@@ -544,6 +576,7 @@ async function bootstrap() {
     window.addEventListener('lm-locked', () => { if (!isLockShown()) lockNow({ serverAlreadyLocked: true }); });
   }
   await setupLock();
+  watchOtherTabs(state.store);
 
   await refreshData();
 

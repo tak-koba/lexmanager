@@ -23,10 +23,10 @@ export async function render(container, params, ctx) {
   clear(container);
   const id = params && params.id;
   if (!id) {
-    container.appendChild(el('p', { class: 'text-error' }, '案件IDが指定されていません'));
+    container.appendChild(el('p', { class: 'text-error' }, '表示する案件が指定されていません（一覧から選び直してください）'));
     return;
   }
-  container.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  container.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
 
   let all;
   try {
@@ -81,7 +81,7 @@ export async function render(container, params, ctx) {
     root.appendChild(editBar(editMode, {
       onEdit: () => { editMode = true; setDirty(false); renderAll(); },
       onCancel: async () => {
-        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？'))) return;
+        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？', { okLabel: '破棄する', danger: true }))) return;
         setDirty(false);
         if (isNew) { editMode = false; ctx.navigate('#/cases'); return; }
         editMode = false; renderAll();
@@ -103,7 +103,7 @@ export async function render(container, params, ctx) {
       const caseTodos = (all.todos || []).filter((t) => t.caseId === record.id);
       root.appendChild(el('div', { class: 'danger-zone' }, [
         deleteRecordButton(ctx, 'cases', () => record, record.caseName || 'この案件', '#/cases',
-          caseTodos.length ? `この案件のToDo ${caseTodos.length}件は残ります（関連案件なしのToDoになります）。` : '', 'この案件を削除')
+          caseTodos.length ? `この案件のToDo ${caseTodos.length}件は残ります（「案件なし」のToDoになります）。` : '', 'この案件を削除')
       ]));
     }
   }
@@ -172,7 +172,7 @@ export async function render(container, params, ctx) {
       const archived = el('input', { type: 'checkbox', checked: !!record.isArchived });
       form.appendChild(el('label', {}, ['案件名', nameInput]));
       form.appendChild(el('label', {}, ['依頼者（複数選択可）', clientSelect]));
-      form.appendChild(el('label', { class: 'field-row' }, [archived, '終了（アーカイブ）']));
+      form.appendChild(el('label', { class: 'field-row' }, [archived, '終了（一覧の「進行中」に出さない）']));
       form.addEventListener('input', () => setDirty(true));
       collectors.push(() => ({
         caseName: nameInput.value,
@@ -307,7 +307,7 @@ export async function render(container, params, ctx) {
           el('button', { type: 'button', class: 'btn btn-small', onClick: () => {
             const ics = buildIcs({ uid: `${record.id}@lexmanager`, title: record.caseName || '案件', dateOrDateTime: record.nextDate, description: record.overview || '' });
             downloadIcs(ics, `${record.caseName || 'case'}.ics`);
-          } }, 'ICSダウンロード')
+          } }, 'カレンダーファイル(.ics)を保存')
         ]);
         section.appendChild(btnRow);
       }

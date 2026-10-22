@@ -17,11 +17,11 @@ export async function render(container, params, ctx) {
   clear(container);
   const id = params && params.id;
   if (!id) {
-    container.appendChild(el('p', { class: 'text-error' }, '顧客IDが指定されていません'));
+    container.appendChild(el('p', { class: 'text-error' }, '表示する顧客が指定されていません（一覧から選び直してください）'));
     return;
   }
 
-  container.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  container.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
 
   let all;
   try {
@@ -83,7 +83,7 @@ export async function render(container, params, ctx) {
     root.appendChild(editBar(editMode, {
       onEdit: () => { editMode = true; setDirty(false); renderAll(); },
       onCancel: async () => {
-        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？'))) return;
+        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？', { okLabel: '破棄する', danger: true }))) return;
         setDirty(false);
         if (isNew) { editMode = false; ctx.navigate('#/clients'); return; }
         editMode = false; renderAll();
@@ -143,7 +143,7 @@ export async function render(container, params, ctx) {
       section.appendChild(el('div', { class: 'field-row' }, [
         clientTypeChip(record),
         record.retainerContract === 'yes' ? el('span', { class: 'chip chip-retainer' }, '顧問契約') : null,
-        record.isArchived ? el('span', { class: 'chip' }, 'アーカイブ') : null,
+        record.isArchived ? el('span', { class: 'chip' }, '取引終了') : null,
         ...(record.tags || []).map((t) => el('span', { class: 'chip' }, t))
       ]));
 
@@ -174,7 +174,7 @@ export async function render(container, params, ctx) {
       const tagsInput = el('input', { type: 'text', class: 'field', value: (record.tags || []).join(', ') });
       form.appendChild(el('label', {}, ['タグ（カンマ区切り）', tagsInput]));
       const archived = el('input', { type: 'checkbox', checked: !!record.isArchived });
-      form.appendChild(el('label', { class: 'field-row' }, [archived, 'アーカイブ済み']));
+      form.appendChild(el('label', { class: 'field-row' }, [archived, '取引終了（一覧の「取引中」に出さない）']));
 
       form.addEventListener('input', () => setDirty(true));
       collectors.push(() => {
@@ -329,17 +329,26 @@ export async function render(container, params, ctx) {
 
     function buildAiButtons() {
       const row = el('div', { class: 'field-row' });
+      // 読み取り結果をメモに書くときは、項目名を日本語にする（companyName: → 会社名:）
+      const memoLine = (sel, fields) => Object.entries(sel)
+        .map(([k, v]) => `${(fields.find((f) => f.key === k) || { label: k }).label}: ${v}`).join(' / ');
+      const CARD_FIELDS = [
+        { key: 'companyName', label: '会社名' },
+        { key: 'title', label: '役職' },
+        { key: 'department', label: '部署' },
+        { key: 'name', label: '氏名' },
+        { key: 'tel', label: '電話' },
+        { key: 'email', label: 'メール' }
+      ];
+      const REGISTRY_FIELDS = [
+        { key: 'established', label: '設立年月日' },
+        { key: 'capital', label: '資本金' },
+        { key: 'purpose', label: '目的' }
+      ];
       row.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: async () => {
-        await runAiExtractFlow(ctx, { kind: 'card', clientType: record.type }, [
-          { key: 'companyName', label: '会社名' },
-          { key: 'title', label: '役職' },
-          { key: 'department', label: '部署' },
-          { key: 'name', label: '氏名' },
-          { key: 'tel', label: '電話' },
-          { key: 'email', label: 'メール' }
-        ], async (sel) => {
+        await runAiExtractFlow(ctx, { kind: 'card', clientType: record.type }, CARD_FIELDS, async (sel) => {
           if (record.type === 'individual') {
-            const extra = Object.entries(sel).map(([k, v]) => `${k}: ${v}`).join(' / ');
+            const extra = memoLine(sel, CARD_FIELDS);
             await saveSection({ notes: (record.notes ? record.notes + '\n' : '') + `【名刺】${extra}` });
           } else {
             const cp = { name: sel.name || '', title: sel.title || '', dept: sel.department || '', tel: sel.tel || '', email: sel.email || '', homeAddr: '' };
@@ -349,12 +358,8 @@ export async function render(container, params, ctx) {
       } }, '名刺AI読取'));
       if (record.type === 'corporate') {
         row.appendChild(el('button', { type: 'button', class: 'btn btn-small', onClick: async () => {
-          await runAiExtractFlow(ctx, { kind: 'registry' }, [
-            { key: 'established', label: '設立年月日' },
-            { key: 'capital', label: '資本金' },
-            { key: 'purpose', label: '目的' }
-          ], async (sel) => {
-            const extra = Object.entries(sel).map(([k, v]) => `${k}: ${v}`).join(' / ');
+          await runAiExtractFlow(ctx, { kind: 'registry' }, REGISTRY_FIELDS, async (sel) => {
+            const extra = memoLine(sel, REGISTRY_FIELDS);
             await saveSection({ notes: (record.notes ? record.notes + '\n' : '') + `【登記】${extra}` });
           });
         } }, '登記AI読取'));
@@ -571,9 +576,13 @@ export async function render(container, params, ctx) {
     function view() {
       clear(section);
       section.appendChild(sectionHeader('備考・紹介者'));
-      section.appendChild(el('p', {}, record.notes || ''));
-      section.appendChild(el('p', { class: 'text-muted' }, `紹介者: ${record.referrer || ''} ${record.referrerAttr || ''}`));
-      section.appendChild(el('p', { class: 'text-muted' }, `事務所封筒: ${{ ok: '可', ng: '不可', unknown: '不明' }[record.envelope] || ''}`));
+      // 空の項目は「紹介者: 」のような空行を出さない
+      const referrer = [record.referrer, record.referrerAttr].filter(Boolean).join(' ');
+      const envelope = { ok: '可', ng: '不可', unknown: '不明' }[record.envelope] || '';
+      if (record.notes) section.appendChild(el('p', { style: 'white-space:pre-line' }, record.notes));
+      if (referrer) section.appendChild(el('p', { class: 'text-muted' }, `紹介者: ${referrer}`));
+      if (envelope) section.appendChild(el('p', { class: 'text-muted' }, `事務所封筒: ${envelope}`));
+      if (!record.notes && !referrer && !envelope) section.appendChild(el('p', { class: 'text-muted' }, '未入力'));
     }
 
     function edit() {

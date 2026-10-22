@@ -2,10 +2,15 @@
 //
 // 端末内（IndexedDB）に「状態」をひとまとまりで保存する:
 //   { records: {clients:{id:rec}, cases:{...}, todos:{...}},
-//     base:    同じ形（最後にPCデータを読み込んだ時点の内容。変更の書出しに使う）,
+//     base:    同じ形（最後にPCデータを読み込んだ時点の内容。変更の書き出しに使う）,
 //     snapshotStamp, snapshotAt, lastExportAt, lastExportSig, deviceName }
 // パスワードを設定すると、状態全体（base を含む）を AES-GCM で暗号化して保存する。
 // データ量は小さい（数十〜数百件）ため、保存のたびに全体を書き込む単純な方式にしている。
+//
+// 複数の画面（タブ）対策: 保存データ（envelope）の外側に「保存の世代」saveGen を持ち、保存のたびに1増やす。
+// 保存の直前に IndexedDB 上の saveGen を読み、自分が最後に読んだ／書いた世代と違えば（別の画面が先に保存した）
+// 保存せずに例外にする（古い内容で上書きしたり、作り替えた鍵を古い鍵で上書きしたりしないため）。
+// 鍵の作り替え・保存は BroadcastChannel('lexmanager4') で他の画面へ知らせる（app.js が開き直しを促す）。
 
 import { newId } from './model.js';
 
@@ -177,6 +182,13 @@ function emptyState() {
   };
 }
 
+export const STALE_MESSAGE = '別の画面で更新されました。開き直してください';
+
+/** 保存データの世代（saveGen）。この仕組みより前に保存したデータは 0 */
+function genOf(envelope) {
+  return (envelope && Number(envelope.saveGen)) || 0;
+}
+
 function clone(v) {
   return v === undefined ? undefined : JSON.parse(JSON.stringify(v));
 }
@@ -218,6 +230,10 @@ export class LocalStore {
     this._state = null;     // ロック中は null
     this._changeCbs = [];
     this._chain = Promise.resolve(); // 保存・鍵の作り替えを1つずつ順に行う（途中で混ざらないように）
+    this._gen = 0;          // 最後に読んだ／書いた保存データの世代（saveGen）
+    this._stale = false;    // 別の画面に先に保存され、この画面の内容が古くなった
+    this._channel = null;   // 他の画面への通知（BroadcastChannel）
+    this._externalCbs = [];
   }
 
   // ---------- 起動・ロック ----------
@@ -225,8 +241,10 @@ export class LocalStore {
   async init() {
     this._db = await openDb();
     const envelope = await kvGet(this._db, 'state');
+    this._gen = genOf(envelope);
+    this._openChannel();
     if (envelope && envelope.v === 2) {
-      const { enc, ...env } = envelope;
+      const { enc, saveGen, ...env } = envelope;
       this._env = env;
       this._salt = (env.kdf && env.kdf.pw && env.kdf.pw.salt) || 'v2';
       this._asciiPw = !!env.ascii;
@@ -256,13 +274,15 @@ export class LocalStore {
     if (!envelope || !(envelope.enc || envelope.v)) return true;
     try {
       if (envelope.v === 2) {
-        const { enc, ...env } = envelope;
+        const { enc, saveGen, ...env } = envelope;
         const dk = await this._openDk(env, 'pw', pass);
         const state = await decryptJson(dk, enc, aad('state', env.gen));
         this._dk = dk;
         this._env = env;
         this._key = null;
         this._state = Object.assign(emptyState(), state);
+        this._gen = genOf(envelope);
+        this._stale = false; // 最新の保存データを読んだ
         return true;
       }
       if (envelope.v) return false; // 未知の新しい形式（新しい版のアプリで開いてください）
@@ -270,6 +290,8 @@ export class LocalStore {
       const state = await decryptJson(key, envelope.enc);
       this._key = key;
       this._state = Object.assign(emptyState(), state);
+      this._gen = genOf(envelope);
+      this._stale = false;
       return true;
     } catch (e) {
       return false;
@@ -329,7 +351,7 @@ export class LocalStore {
       const raw = randBytes(32);
       try {
         const env = {
-          v: 2, gen, ascii: true, rcIssuedAt: nowIso(),
+          v: 2, gen, ascii: PASSWORD_RE.test(password), rcIssuedAt: nowIso(),
           kdf: { pw: { salt: toB64(randBytes(16)), iter: KDF_ITER_PW }, rc: { salt: toB64(randBytes(16)), iter: KDF_ITER_RC } }
         };
         env.wrapPw = await sealBytes(await kekFrom(password, env.kdf.pw), raw, aad('pw', gen));
@@ -344,10 +366,11 @@ export class LocalStore {
         const state = stateFn();
         const enc = await encryptJson(dk, state, aad('state', gen));
         await decryptJson(dk, enc, aad('state', gen)); // 暗号文が開けることを確かめてから保存
-        await kvPut(this._db, 'state', { ...env, enc });
+        await this._write({ ...env, enc }); // 別の画面が先に保存していたら、ここで止まる（何も変わらない）
         // 保存が完了してから切り替える
-        this._dk = dk; this._env = env; this._key = null; this._salt = env.kdf.pw.salt; this._asciiPw = true;
+        this._dk = dk; this._env = env; this._key = null; this._salt = env.kdf.pw.salt; this._asciiPw = env.ascii;
         this._state = state;
+        this._broadcast('key-changed');
         if (onCommitted) onCommitted();
       } finally {
         raw.fill(0);
@@ -383,8 +406,9 @@ export class LocalStore {
         back.fill(0);
         if (!ok) throw new Error('鍵の確認に失敗しました（何も変更していません）');
         const enc = await encryptJson(this._dk, this._state, aad('state', env.gen));
-        await kvPut(this._db, 'state', { ...env, enc });
+        await this._write({ ...env, enc });
         this._env = env; this._salt = env.kdf.pw.salt; this._asciiPw = true;
+        this._broadcast('key-changed');
       } finally {
         raw.fill(0);
       }
@@ -404,8 +428,9 @@ export class LocalStore {
     this._requireUnlocked();
     await this._checkCurrent(currentPw);
     await this._serial(async () => {
-      await kvPut(this._db, 'state', { plain: this._state });
+      await this._write({ plain: this._state });
       this._dk = null; this._env = null; this._key = null; this._salt = null; this._asciiPw = false;
+      this._broadcast('key-changed');
     });
   }
 
@@ -421,6 +446,8 @@ export class LocalStore {
       const { enc, ...env } = envelope;
       const dk = await this._openDk(env, 'rc', code);
       state = Object.assign(emptyState(), await decryptJson(dk, enc, aad('state', env.gen)));
+      this._gen = genOf(envelope); // この内容を元に作り直す（その後に別の画面が保存していれば commit で止まる）
+      this._stale = false;
     } catch (e) {
       throw new Error('復旧コードが違います');
     }
@@ -483,22 +510,81 @@ export class LocalStore {
   }
 
   async _persist() {
-    return this._serial(async () => {
-      if (!this._state) throw new Error('パスワードを入力してロックを解除してください');
-      if (this._dk && this._env) {
-        await kvPut(this._db, 'state', { ...this._env, enc: await encryptJson(this._dk, this._state, aad('state', this._env.gen)) });
-      } else if (this._key) {
-        await kvPut(this._db, 'state', { salt: this._salt, ascii: this._asciiPw, enc: await encryptJson(this._key, this._state) });
-      } else if (this._salt) {
-        throw new Error('保存できません（暗号化の鍵がありません）'); // 暗号化している端末に平文で書かない
-      } else {
-        await kvPut(this._db, 'state', { plain: this._state });
-      }
-    });
+    return this._serial(() => this._persistNow());
   }
 
-  _requireUnlocked() {
+  /** 今の状態を保存する（_serial の内側から呼ぶ） */
+  async _persistNow() {
     if (!this._state) throw new Error('パスワードを入力してロックを解除してください');
+    if (this._dk && this._env) {
+      await this._write({ ...this._env, enc: await encryptJson(this._dk, this._state, aad('state', this._env.gen)) });
+    } else if (this._key) {
+      await this._write({ salt: this._salt, ascii: this._asciiPw, enc: await encryptJson(this._key, this._state) });
+    } else if (this._salt) {
+      throw new Error('保存できません（暗号化の鍵がありません）'); // 暗号化している端末に平文で書かない
+    } else {
+      await this._write({ plain: this._state });
+    }
+    this._broadcast('saved');
+  }
+
+  /**
+   * 保存データを書き込む（_serial の内側から呼ぶ）。直前に IndexedDB 上の世代を確かめ、
+   * 自分が最後に読んだ／書いた世代と違えば（別の画面が先に保存した）書かずに例外にする。
+   */
+  async _write(envelope) {
+    const onDisk = genOf(await kvGet(this._db, 'state'));
+    if (onDisk !== this._gen) { this._stale = true; throw new Error(STALE_MESSAGE); }
+    const next = this._gen + 1;
+    await kvPut(this._db, 'state', { ...envelope, saveGen: next });
+    this._gen = next; // 書き込みが完了してから進める（失敗したら元のまま）
+  }
+
+  // ---------- 他の画面（タブ）との連絡 ----------
+
+  _openChannel() {
+    if (this._channel || typeof BroadcastChannel !== 'function') return;
+    try {
+      this._channel = new BroadcastChannel(DB_NAME);
+      if (this._channel.unref) this._channel.unref(); // Node（テスト）で終了を妨げない。ブラウザには無い
+      this._channel.onmessage = (ev) => {
+        const msg = ev && ev.data;
+        if (!msg || !msg.type) return;
+        // 別の画面が保存した（世代が自分と違う）→ この画面の内容は古い。以後の保存は止める
+        if (msg.gen !== this._gen) this._stale = true;
+        for (const cb of this._externalCbs) {
+          try { cb(msg); } catch (e) { /* ignore */ }
+        }
+      };
+    } catch (e) {
+      this._channel = null; // 使えない環境では通知なし（保存時の世代確認は働く）
+    }
+  }
+
+  _broadcast(type) {
+    try { if (this._channel) this._channel.postMessage({ type, gen: this._gen }); } catch (e) { /* ignore */ }
+  }
+
+  /** 別の画面で保存（type:'saved'）・鍵の作り替え（type:'key-changed'）があったときに cb(msg) を呼ぶ */
+  onExternalChange(cb) {
+    this._externalCbs.push(cb);
+    return () => { this._externalCbs = this._externalCbs.filter((c) => c !== cb); };
+  }
+
+  /** 書き込む前の確認: ロック解除済みで、別の画面に先を越されていない（古い内容のまま変更しない） */
+  _requireUnlocked() {
+    this._requireReadable();
+    if (this._stale) throw new Error(STALE_MESSAGE);
+  }
+
+  /** 読むだけの確認（別の画面で更新されていても、表示はできるようにする） */
+  _requireReadable() {
+    if (!this._state) throw new Error('パスワードを入力してロックを解除してください');
+  }
+
+  /** 別の画面で更新され、この画面の内容が古くなったか（自動同期はこの間止める） */
+  isStale() {
+    return !!this._stale;
   }
 
   async meta() {
@@ -512,7 +598,7 @@ export class LocalStore {
   // ---------- アダプターの共通インターフェース ----------
 
   async all() {
-    this._requireUnlocked();
+    this._requireReadable();
     const out = {};
     for (const coll of COLLS) out[coll] = Object.values(this._state.records[coll]).map(clone);
     return out;
@@ -598,8 +684,12 @@ export class LocalStore {
 
   // ---------- PC ⇄ iPhone ----------
 
-  /** PCが作った mobile/snapshot.json を読み込み、端末内を置き換える。 */
-  async importSnapshot(file) {
+  /**
+   * PCが作った mobile/snapshot.json を読み込み、端末内を置き換える。
+   * onlyIfNoUnexported: true なら（自動同期）、置き換える直前に未送信の変更を確かめ、あれば読み込まずに
+   * {ok:false, skipped:true} を返す（確かめてから置き換えるまでの間に保存が割り込まないよう、_serial の内側で行う）。
+   */
+  async importSnapshot(file, { onlyIfNoUnexported = false } = {}) {
     this._requireUnlocked();
     let snap;
     try {
@@ -608,24 +698,37 @@ export class LocalStore {
       throw new Error('ファイルを読み取れません（JSON形式ではありません）');
     }
     if (!snap || snap.format !== 'lexmanager-snapshot') {
-      throw new Error('LexManagerData/mobile/snapshot.json を選んでください（形式が違います）');
+      throw new Error('PCのデータのファイル（OneDriveの「LexManagerData」フォルダの「mobile」にある snapshot.json）を選んでください（形式が違います）');
     }
     const next = { clients: {}, cases: {}, todos: {} };
     for (const coll of COLLS) for (const rec of snap[coll] || []) if (rec && rec.id) next[coll][rec.id] = rec;
-    this._state.records = clone(next);
-    this._state.base = clone(next);
-    this._state.snapshotStamp = snap.stamp || '';
-    this._state.snapshotAt = snap.exportedAt || nowIso();
-    this._state.gcalStatus = snap.gcal || null; // PCのGoogleカレンダー連携の状態（表示用）
-    this._state.lastExportSig = '';
-    await this._persist();
+    const KEYS = ['records', 'base', 'snapshotStamp', 'snapshotAt', 'gcalStatus', 'lastExportSig'];
+    const done = await this._serial(async () => {
+      this._requireUnlocked();
+      if (onlyIfNoUnexported && await this.hasUnexportedChanges()) return false; // 直前に変更が入った: 読み込まない
+      const prev = Object.fromEntries(KEYS.map((k) => [k, this._state[k]]));
+      this._state.records = clone(next);
+      this._state.base = clone(next);
+      this._state.snapshotStamp = snap.stamp || '';
+      this._state.snapshotAt = snap.exportedAt || nowIso();
+      this._state.gcalStatus = snap.gcal || null; // PCのGoogleカレンダー連携の状態（表示用）
+      this._state.lastExportSig = '';
+      try {
+        await this._persistNow();
+      } catch (e) {
+        Object.assign(this._state, prev); // 保存できなければ元に戻す（画面と保存データを食い違わせない）
+        throw e;
+      }
+      return true;
+    });
+    if (!done) return { ok: false, skipped: true };
     this._notifyChange();
     return { ok: true, counts: { clients: (snap.clients || []).length, cases: (snap.cases || []).length, todos: (snap.todos || []).length } };
   }
 
   /** 前回PCデータを読み込んで以降の変更一覧。 */
   _computeChanges() {
-    this._requireUnlocked();
+    this._requireReadable();
     const changes = [];
     for (const coll of COLLS) {
       const recs = this._state.records[coll];
@@ -654,7 +757,7 @@ export class LocalStore {
     return this._computeChanges().length > 0;
   }
 
-  /** まだ書き出していない変更があるか（書出し後にさらに変えた場合も true）。 */
+  /** まだ書き出していない変更があるか（書き出し後にさらに変えた場合も true）。 */
   async hasUnexportedChanges() {
     const changes = this._computeChanges();
     if (!changes.length) return false;
@@ -730,7 +833,7 @@ export class LocalStore {
         await navigator.share({ files: [fileObj], title: 'LexManager 変更データ' });
         method = 'share';
       } catch (e) {
-        if (e && e.name === 'AbortError') throw new Error('書出しを取り消しました');
+        if (e && e.name === 'AbortError') throw new Error('書き出しを取り消しました');
         download(blob, filename);
       }
     } else {

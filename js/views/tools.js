@@ -10,7 +10,7 @@ const ERA_NAMES = ['令和', '平成', '昭和', '大正', '明治'];
 
 // ツールの一覧（表示順）。need はその端末で使える機能（PCのみ等）
 const TOOLS = [
-  { key: 'free', icon: '🕒', title: '空き日程の検索', desc: 'Googleカレンダーから空いている日時を探し、候補の文章を作ってTBDに仮登録', need: 'gcalFree', build: buildFreeSection },
+  { key: 'free', icon: '🕒', title: '空き日程の検索', desc: 'Googleカレンダーから空いている日時を探し、候補の文章を作って仮予定（TBD）として登録', need: 'gcalFree', build: buildFreeSection },
   { key: 'age', icon: '🎂', title: '年齢・学年・卒業年次', desc: '生年月日から満年齢、現在の学年、入学・卒業の年を表示', build: buildAgeSection },
   { key: 'days', icon: '📅', title: '日数計算', desc: '2つの日付の間の日数（初日算入・不算入、うるう日の指摘）', build: buildDaysSection },
   { key: 'interest', icon: '💴', title: '利息計算', desc: '元金・利率・期間から利息／遅延損害金を計算', build: buildInterestSection },
@@ -100,6 +100,7 @@ async function buildFreeSection(ctx) {
   const dayEnd = el('input', { type: 'time', class: 'field', value: '17:00', step: 900 });
   const minSel = el('select', { class: 'field' }, [30, 60, 90, 120, 180, 240].map((m) => el('option', { value: m, selected: m === 60 }, durationLabel(m))));
   const bufSel = el('select', { class: 'field' }, [0, 15, 30, 45, 60, 90, 120].map((m) => el('option', { value: m, selected: m === 60 }, m === 0 ? 'なし' : durationLabel(m))));
+  // 初期値はGoogleカレンダー上のカレンダー名（外出の仕事・会食用。名前は英語のまま）
   const special = el('input', { type: 'text', class: 'field', value: 'Work (outside), Banquet' });
   const withYear = el('input', { type: 'checkbox', checked: true });
 
@@ -109,6 +110,7 @@ async function buildFreeSection(ctx) {
   section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['時間（開始）', dayStart]), el('label', {}, ['時間（終了）', dayEnd])]));
   section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['必要な空き時間', minSel]), el('label', {}, ['前後の間隔', bufSel])]));
   section.appendChild(el('label', {}, ['前後に必ず1時間以上空けるカレンダー（カンマ区切り）', special]));
+  section.appendChild(el('p', { class: 'text-muted' }, '移動が必要な予定を入れているカレンダーの名前を、Googleカレンダーでの表示どおりに入力します（初期値の「Work (outside)」は外出の仕事、「Banquet」は会食のカレンダー）。'));
   section.appendChild(el('p', { class: 'text-muted' }, `対象: マイカレンダーの予定（「${st.calendarName || 'ToDo'}」は除く）。終日の予定がある日・祝日は除外します。`));
 
   const result = el('div', { class: 'tool-result' });
@@ -154,16 +156,16 @@ async function buildFreeSection(ctx) {
     const text = el('textarea', { class: 'field free-text', rows: Math.min(14, last.days.length + 1) }, formatSlots(last.days, last.minMinutes, withYear.checked));
     text.addEventListener('input', () => { edited = true; });
     withYear.onchange = async () => {
-      if (edited && !(await ctx.confirm('直した内容を破棄して、年の表示を切り替えますか？'))) { withYear.checked = !withYear.checked; return; }
+      if (edited && !(await ctx.confirm('直した内容を破棄して、年の表示を切り替えますか？', { okLabel: '破棄する', danger: true }))) { withYear.checked = !withYear.checked; return; }
       text.value = formatSlots(last.days, last.minMinutes, withYear.checked);
       edited = false;
     };
     const title = el('input', { type: 'text', class: 'field', placeholder: '例: ○○社 打合せ' });
-    const memo = el('textarea', { class: 'field', rows: 2, placeholder: '何の予定調整か（TBDの予定のメモ欄に入ります）' });
+    const memo = el('textarea', { class: 'field', rows: 2, placeholder: '何の予定調整か（仮予定のメモ欄に入ります）' });
 
     result.appendChild(el('label', { class: 'field-row' }, [withYear, '年を記載する']));
     result.appendChild(el('label', {}, ['候補（直して使えます）', text]));
-    result.appendChild(el('label', {}, ['件名（TBDの予定の件名）', title]));
+    result.appendChild(el('label', {}, ['件名（仮予定（TBD）の件名）', title]));
     result.appendChild(el('label', {}, ['メモ', memo]));
     result.appendChild(el('div', { class: 'field-row' }, [
       el('button', { type: 'button', class: 'btn', onClick: async () => {
@@ -176,7 +178,7 @@ async function buildFreeSection(ctx) {
         if (!st.tbdCalendarId) { ctx.toast('設定でTBDカレンダーを選んでください', 'error'); return; }
         const skipped = parsed.errors.filter((l) => l.trim()).length;
         const ok = await ctx.confirm(`テキストをコピーし、${parsed.slots.length}件の候補を「${st.tbdCalendarName || 'TBD'}」カレンダーに登録します。` +
-          (skipped ? `\n（日時を読み取れない行 ${skipped}行は登録しません）` : '') + '\nよろしいですか？');
+          (skipped ? `\n（日時を読み取れない行 ${skipped}行は登録しません）` : '') + '\nよろしいですか？', { okLabel: '登録する' });
         if (!ok) return;
         const copied = await copyText(text.value);
         try {
@@ -431,17 +433,38 @@ function buildCsvSection(ctx) {
     el('option', { value: 'cases' }, '案件'),
     el('option', { value: 'todos' }, 'ToDo')
   ]);
-  const idsInput = el('input', { type: 'text', class: 'field', placeholder: 'IDをカンマ区切りで指定（空欄で全件）' });
+  // 全件を出力する（一部だけ選ぶ欄は、内部の番号を入力する必要があり分かりにくいため設けない）
   const exportBtn = el('button', { type: 'button', class: 'btn btn-primary', onClick: () => {
-    const ids = idsInput.value.split(',').map((s) => s.trim()).filter(Boolean);
-    const url = ctx.store.exportCsvUrl(targetSelect.value, ids);
+    const url = ctx.store.exportCsvUrl(targetSelect.value, []);
     window.open(url, '_blank', 'noopener');
-  } }, 'CSVダウンロード');
-  section.appendChild(el('div', { class: 'field-row' }, [targetSelect, idsInput, exportBtn]));
+  } }, 'CSVファイルを保存');
+  section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['出力するもの', targetSelect]), exportBtn]));
+  section.appendChild(el('p', { class: 'text-muted' }, '選んだ種類のデータを全件、CSVファイル（Excelで開けます）として保存します。'));
   return section;
 }
 
 // ---------------- ごみ箱 ----------------
+const TRASH_KIND = { clients: '顧客', cases: '案件', todos: 'ToDo' };
+
+/** ごみ箱の項目の名前（サーバーが名前を付けていればそれ、なければレコードから作る） */
+function trashName(item) {
+  const r = item.record || {};
+  const fromRecord = r.caseName || r.task || (r.title && String(r.title).split(/\r?\n/)[0]) || r.companyName ||
+    [r.lastName, r.firstName].filter(Boolean).join(' ');
+  return item.label || item.title || fromRecord || '（名前なし）';
+}
+
+/** 削除日時（ファイル名の末尾「__20261022T093000Z.json」から。サーバーが deletedAt を返せばそれ） */
+function trashDeletedAt(item) {
+  let iso = item.deletedAt || '';
+  const m = !iso && /__(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/.exec(item.name || '');
+  if (m) iso = `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`;
+  const d = iso ? new Date(iso) : null;
+  return d && !Number.isNaN(d.getTime())
+    ? d.toLocaleString('ja-JP', { year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    : '不明';
+}
+
 async function buildTrashSection(ctx) {
   const section = el('section', { class: 'section' });
   const listBox = el('div', { class: 'list-box' });
@@ -463,9 +486,12 @@ async function buildTrashSection(ctx) {
     }
     const list = el('ul', { class: 'list' });
     for (const item of items) {
-      const label = item.name || `${item.coll}/${item.id}`;
       list.appendChild(el('li', { class: 'list-row' }, [
-        el('span', {}, label),
+        el('span', { class: 'chip' }, TRASH_KIND[item.coll] || 'データ'),
+        el('div', { class: 'row-main row-main-stack' }, [
+          el('span', {}, trashName(item)),
+          el('span', { class: 'text-muted' }, `削除: ${trashDeletedAt(item)}`)
+        ]),
         el('button', { type: 'button', class: 'btn btn-small', onClick: async () => {
           try {
             await ctx.store.restoreTrash({ coll: item.coll, id: item.id, name: item.name });

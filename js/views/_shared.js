@@ -197,8 +197,10 @@ export function quickCreateClientDialog(ctx) {
     ]);
 
     const fieldsBox = el('div', { class: 'field-box' });
+    const errBox = el('p', { class: 'text-error', 'aria-live': 'polite' });
     form.appendChild(typeRow);
     form.appendChild(fieldsBox);
+    form.appendChild(errBox);
 
     function renderFields() {
       clear(fieldsBox);
@@ -263,6 +265,16 @@ export function quickCreateClientDialog(ctx) {
           primary: true,
           onClick: async () => {
             const rec = buildRec();
+            // 名前が空のまま登録しない（個人は姓か名、法人は会社名）。［すべての項目を入力…］は空でもよい
+            const missing = type === 'individual'
+              ? (!rec.lastName.trim() && !rec.firstName.trim() ? ['姓または名', 'lastName'] : null)
+              : (!rec.companyName.trim() ? ['会社名', 'companyName'] : null);
+            if (missing) {
+              errBox.textContent = `${missing[0]}を入力してください`;
+              const input = form.querySelector(`[name="${missing[1]}"]`);
+              if (input) input.focus();
+              return 'keep-open';
+            }
             try {
               const created = await ctx.store.create('clients', rec);
               ctx.toast('顧客を登録しました', 'success');
@@ -326,9 +338,11 @@ export function quickCreateCaseDialog(ctx, clients) {
     const clientSelect = el('select', { name: 'clientIds', class: 'field', multiple: true, size: Math.min(6, Math.max(3, (clients || []).length)) },
       sortByKana((clients || []).slice(), kanaName).map((c) => el('option', { value: c.id }, displayName(c)))
     );
+    const errBox = el('p', { class: 'text-error', 'aria-live': 'polite' });
     form.appendChild(typeRow);
     form.appendChild(el('label', {}, ['案件名', nameInput]));
     form.appendChild(el('label', {}, ['依頼者（複数選択可）', clientSelect]));
+    form.appendChild(errBox);
 
     function buildRec() {
       const rec = defaultCase(caseType);
@@ -349,6 +363,11 @@ export function quickCreateCaseDialog(ctx, clients) {
           primary: true,
           onClick: async () => {
             const rec = buildRec();
+            if (!rec.caseName.trim()) {
+              errBox.textContent = '案件名を入力してください';
+              nameInput.focus();
+              return 'keep-open';
+            }
             try {
               const created = await ctx.store.create('cases', rec);
               ctx.toast('案件を登録しました', 'success');
@@ -371,7 +390,7 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
     const titleInput = el('textarea', { name: 'title', class: 'field', rows: 3, placeholder: '詳細（任意）' });
     const dl = dateTimeInputs('');
     const caseSelect = el('select', { name: 'caseId', class: 'field' }, [
-      el('option', { value: '' }, '（個別ToDo）'),
+      el('option', { value: '' }, '案件なし'),
       ...sortByKana((cases || []).slice(), (c) => c.caseName).map((c) => el('option', { value: c.id, selected: c.id === presetCaseId }, c.caseName))
     ]);
     const requesterInput = el('input', { type: 'text', name: 'requester', class: 'field' });
@@ -428,7 +447,7 @@ export function quickCreateTodoDialog(ctx, cases, presetCaseId) {
  */
 export async function runAiExtractFlow(ctx, payload, fields, onApply) {
   if (!ctx.caps.ai) return;
-  const ok = await confirmDialog('外部（Anthropic）へ送信します。よろしいですか？');
+  const ok = await confirmDialog('読み取りのため、画像を外部（Anthropic社のAI）へ送信します。よろしいですか？', { okLabel: '送信する' });
   if (!ok) return;
   let data;
   try {
@@ -482,26 +501,49 @@ export async function runAiExtractFlow(ctx, payload, fields, onApply) {
 
 // ---------------- 保存（競合時の解決つき） ----------------
 
-const FIELD_LABELS = {
+/** 項目名（データのキー → 画面の名前）。競合の確認画面などで共用する */
+export const FIELD_LABELS = {
   lastName: '姓', firstName: '名', lastNameKana: 'せい', firstNameKana: 'めい', companyName: '会社名',
   companyNameKana: '会社名よみ', representative: '代表者', repTitle: '代表者役職', repIsContact: '代表者が担当者を兼任', extraEmails: '追加メール', birthday: '生年月日',
   phones: '電話番号', email: 'メール', mainZip: '郵便番号', mainAddr: '住所', prevZip: '前住所〒', prevAddr: '前住所',
   hkAddr: '本籍', notes: '備考', tags: 'タグ', referrer: '紹介者', referrerAttr: '紹介者属性', envelope: '封筒郵送',
   hoterasu: '法テラス', retainerContract: '顧問契約', retainerDate: '顧問契約日', altContacts: '本人以外の連絡先',
   contactPersons: '担当者', branchOffices: '事業所', relatedCompanies: '関連会社', cards: '名刺', attachments: '添付',
-  isArchived: '終了', registeredAt: '登録日', caseName: '案件名', clientIds: '依頼者', caseCategory: '案件区分',
+  isArchived: '終了', registeredAt: '登録日', type: '個人／法人', caseType: '案件の種類', caseName: '案件名', clientIds: '依頼者', caseCategory: '案件区分',
   overview: '概要', requestContent: '依頼内容', commissionSigned: '委任契約', opponents: '相手方', trialType: '裁判種別',
   trialMethod: '期日方法', trialPrep: '準備事項', courtRole: '役割', trialCourt: '裁判所', trialDept: '担当部',
   trialClerk: '書記官', trialTel: '裁判所電話', trialFax: '裁判所FAX', nextDate: '次回期日', minutes: '議事録',
-  task: 'タスク', title: '詳細', deadline: '期限', done: '完了', caseId: '関連案件'
+  task: 'タスク', title: '詳細', deadline: '期限', done: '完了', doneAt: '完了日時', caseId: '関連案件',
+  caseLabel: '案件名（テキスト）', requester: '依頼者', clientId: '依頼者の顧客', calendar: 'Googleカレンダーに登録', mail: '元のメール'
 };
 
-function showValue(v) {
+/** 項目名。顧客の isArchived は「取引終了」、案件は「終了」 */
+export function fieldLabel(key, coll) {
+  if (key === 'isArchived') return coll === 'clients' ? '取引終了' : '終了';
+  return FIELD_LABELS[key] || key;
+}
+
+/** 値を読みやすく（配列は主な項目を「、」でつなぐ。長いものは80文字で切る） */
+export function formatFieldValue(v) {
+  const cut = (s) => (s.length > 80 ? s.slice(0, 80) + '…' : s);
   if (v === undefined || v === null || v === '') return '（空）';
-  if (typeof v === 'string') return v.length > 80 ? v.slice(0, 80) + '…' : v;
   if (typeof v === 'boolean') return v ? 'はい' : 'いいえ';
-  const s = JSON.stringify(v);
-  return s.length > 80 ? s.slice(0, 80) + '…' : s;
+  if (typeof v === 'string' || typeof v === 'number') return cut(String(v));
+  if (Array.isArray(v)) {
+    if (!v.length) return '（なし）';
+    return cut(v.map((x) => {
+      if (x === null || typeof x !== 'object') return String(x);
+      // 電話: 種類＋番号、担当者・相手方: 名前、議事録: 日付＋内容、添付: ファイル名
+      const main = [x.type && x.number ? `${x.type} ${x.number}` : x.number, x.name, x.label, x.date, x.title, x.text, x.originalName, x.email]
+        .filter(Boolean);
+      return main.length ? main.slice(0, 2).join(' ') : Object.values(x).filter((y) => typeof y === 'string' && y).slice(0, 2).join(' ');
+    }).filter(Boolean).join('、') || `${v.length}件`);
+  }
+  if (typeof v === 'object') {
+    return cut(Object.entries(v).filter(([, y]) => y !== '' && y !== null && y !== undefined)
+      .map(([k, y]) => `${fieldLabel(k)}: ${typeof y === 'object' ? JSON.stringify(y) : y}`).join('、'));
+  }
+  return cut(String(v));
 }
 
 function sameValue(a, b) {
@@ -535,9 +577,9 @@ export async function saveRecord(ctx, coll, base, payload) {
       const theirs = el('input', { type: 'radio', name, value: 'theirs' });
       choices[key] = mine;
       body.appendChild(el('div', { class: 'field-box' }, [
-        el('div', { class: 'section-sub' }, FIELD_LABELS[key] || key),
-        el('label', {}, [mine, `この端末の内容: ${showValue(payload[key])}`]),
-        el('label', {}, [theirs, `他の端末の内容: ${showValue(current[key])}`])
+        el('div', { class: 'section-sub' }, fieldLabel(key, coll)),
+        el('label', {}, [mine, `この端末の内容: ${formatFieldValue(payload[key])}`]),
+        el('label', {}, [theirs, `他の端末の内容: ${formatFieldValue(current[key])}`])
       ]));
     }
     return new Promise((resolve) => {
@@ -567,8 +609,11 @@ export function deleteRecordButton(ctx, coll, getRecord, label, afterHash, note 
   return el('button', {
     type: 'button', class: 'btn btn-small btn-danger',
     onClick: async () => {
-      const where = ctx.caps && ctx.caps.trash ? '（ごみ箱に移動します。［ツール］→［ごみ箱］から戻せます）' : '';
-      const ok = await ctx.confirm(`「${label}」を削除しますか？${where}${note ? ' ' + note : ''}`);
+      // PC: ごみ箱へ（戻せる）。iPhone（ごみ箱なし）: この端末から消える（PCへの同期で、PCでも削除される）
+      const where = ctx.caps && ctx.caps.trash
+        ? '（ごみ箱に移動します。［ツール］→［ごみ箱］から戻せます）'
+        : '\nこの端末から削除します。元に戻せません。';
+      const ok = await ctx.confirm(`「${label}」を削除しますか？${where}${note ? '\n' + note : ''}`, { okLabel: '削除する', danger: true });
       if (!ok) return;
       try {
         await ctx.store.remove(coll, getRecord());
@@ -637,7 +682,7 @@ function todoDetailText(t) {
 
 /** 閲覧用のToDo1行（タスクを太字、詳細をその下に1行だけ。詳細はクリックで全体表示）。showCase で案件の列を出す。完了チェックは即時保存し onChanged(saved) を呼ぶ。 */
 export function todoViewRow(ctx, t, { caseById, clientById, showCase = false, onChanged, onEdit, editDisabled = false } = {}) {
-  const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': '完了', onChange: async () => {
+  const cb = el('input', { type: 'checkbox', checked: !!t.done, 'aria-label': t.done ? `「${todoTaskText(t)}」を未完了に戻す` : `「${todoTaskText(t)}」を完了にする`, onChange: async () => {
     try {
       const res = await ctx.store.update('todos', { ...t, done: cb.checked, doneAt: cb.checked ? new Date().toISOString() : '' }, t);
       ctx.toast(cb.checked ? '完了にしました' : '未完了に戻しました', 'success');
@@ -709,7 +754,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
       return node;
     };
     const done = bind(el('input', { type: 'checkbox', checked: !!d.done, 'aria-label': '完了' }), 'done', (n) => n.checked);
-    const calendar = bind(el('input', { type: 'checkbox', checked: !!d.calendar, 'aria-label': 'カレンダー登録' }), 'calendar', (n) => n.checked);
+    const calendar = bind(el('input', { type: 'checkbox', checked: !!d.calendar, 'aria-label': 'Googleカレンダーに登録' }), 'calendar', (n) => n.checked);
     const task = bind(el('input', { type: 'text', class: 'field', value: d.task || '', placeholder: 'やるべきことを簡潔に（例: 準備書面提出）' }), 'task');
     const detailRows = (v) => Math.min(12, Math.max(2, String(v || '').split('\n').length + 1));
     const title = bind(el('textarea', { class: 'field', rows: detailRows(d.title), placeholder: '詳細（依頼内容・要対応事項など）' }, d.title || ''), 'title');
@@ -760,7 +805,7 @@ export function todoGroupEditor({ todos, cases, clients, fixedCaseId = null, new
     return el('div', { class: ['todo-ed-row', r.removed ? 'todo-ed-removed' : '', r.base ? '' : 'todo-ed-new'] }, [
       el('div', { class: 'todo-ed-head' }, [
         el('label', { class: 'todo-ed-done' }, [done, '完了']),
-        el('label', { class: 'todo-ed-done', title: '期限のあるToDoを、Googleカレンダーに予定として登録します（PCで同期したときに反映）' }, [calendar, '📅 カレンダー登録']),
+        el('label', { class: 'todo-ed-done', title: '期限のあるToDoを、Googleカレンダーに予定として登録します（PCで同期したときに反映）' }, [calendar, '📅 Googleカレンダーに登録']),
         r.base ? null : el('span', { class: 'chip' }, '新規'),
         r.removed ? el('span', { class: 'chip' }, '保存すると削除') : null,
         delBtn

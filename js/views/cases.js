@@ -12,7 +12,7 @@ export async function render(container, params, ctx) {
   const state = persisted;
 
   const toolbar = el('div', { class: 'toolbar' });
-  const searchInput = el('input', { type: 'search', placeholder: '案件名で検索', class: 'field', value: state.q });
+  const searchInput = el('input', { type: 'search', placeholder: '案件名で検索', class: 'field', value: state.q, 'aria-label': '案件を検索' });
   searchInput.addEventListener('input', () => { state.q = searchInput.value; renderList(); });
   toolbar.appendChild(searchInput);
 
@@ -28,7 +28,7 @@ export async function render(container, params, ctx) {
     { value: 'all', label: 'すべて' }
   ], state.statusFilter, (v) => { state.statusFilter = v; renderList(); });
 
-  const sortSelect = el('select', { class: 'field' }, [
+  const sortSelect = el('select', { class: 'field', 'aria-label': '並び順' }, [
     el('option', { value: 'registeredAt' }, '登録日'),
     el('option', { value: 'nextDate' }, '次回期日'),
     el('option', { value: 'updatedAt' }, '更新日')
@@ -47,7 +47,7 @@ export async function render(container, params, ctx) {
   container.appendChild(el('div', { class: 'toolbar' }, [sortSelect, newBtn]));
 
   const listBox = el('div', { class: 'list-box' });
-  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
   container.appendChild(listBox);
 
   let cases = [];

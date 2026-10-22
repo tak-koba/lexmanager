@@ -71,7 +71,7 @@ export function setUnsavedGuard(container, isDirtyFn) {
  */
 export async function guardNavigation(isDirtyFn) {
   if (typeof isDirtyFn === 'function' && isDirtyFn()) {
-    return confirmDialog('保存されていない変更があります。移動しますか？');
+    return confirmDialog('保存されていない変更があります。移動しますか？（入力した内容は失われます）', { okLabel: '移動する' });
   }
   return true;
 }

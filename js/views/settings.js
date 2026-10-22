@@ -2,6 +2,7 @@
 import { el, clear } from '../ui/dom.js';
 import { asciiPasswordInput, PASSWORD_RULE } from '../lock.js';
 import { confirmDialog } from '../ui/dialog.js';
+import { fieldLabel, formatFieldValue } from './_shared.js';
 
 export async function render(container, params, ctx) {
   clear(container);
@@ -81,7 +82,8 @@ async function buildLocalPasswordSection(ctx) {
     ? `復旧コード: 発行済み（${new Date(store.recoveryIssuedAt()).toLocaleDateString('ja-JP')}）`
     : '復旧コード: 未発行（パスワードを忘れると、この端末のデータを初期化するしかありません。発行をおすすめします）';
   section.appendChild(el('p', {}, ['🔒 設定済み（この端末のデータは暗号化されています）', el('br'), el('span', { class: store.hasRecovery() ? 'text-muted' : 'text-error' }, rcText)]));
-  const cur = pw('今のパスワード', 'current-password');
+  const cur = store.passwordIsAscii() ? pw('今のパスワード', 'current-password')
+    : el('input', { type: 'password', class: 'field', placeholder: '今のパスワード', autocomplete: 'current-password' });
   const p1 = pw(`新しいパスワード（${PASSWORD_MIN}文字以上）`);
   const p2 = pw('新しいパスワードをもう一度');
   section.appendChild(cur);
@@ -97,7 +99,7 @@ async function buildLocalPasswordSection(ctx) {
   }) }, store.hasRecovery() ? '復旧コードを再発行' : '復旧コードを発行');
   const offBtn = el('button', { type: 'button', class: 'btn btn-danger', onClick: () => busy(offBtn, async () => {
     if (!cur.value) throw new Error('今のパスワードを入力してください');
-    if (!(await ctx.confirm('パスワードをやめて、この端末のデータの暗号化を解除します。よろしいですか？'))) return;
+    if (!(await ctx.confirm('パスワードをやめて、この端末のデータの暗号化を解除します。よろしいですか？', { okLabel: '暗号化を解除する', danger: true }))) return;
     await store.disableEncryption(cur.value);
     ctx.toast('暗号化を解除しました', 'success');
     reload();
@@ -157,7 +159,7 @@ async function buildServerLockSection(ctx) {
         try { after(await store.configureLock({ currentPassword: cur.value, newPassword: p1.value }), 'パスワードを変更しました'); } catch (e) { fail(e); }
       } }, 'パスワードを変更'),
       el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
-        if (!(await ctx.confirm('画面ロックをやめます（パスワードなしで開けるようになります）。よろしいですか？'))) return;
+        if (!(await ctx.confirm('画面ロックをやめます（パスワードなしで開けるようになります）。よろしいですか？', { okLabel: 'ロックをやめる', danger: true }))) return;
         try { after(await store.configureLock({ currentPassword: cur.value, newPassword: '' }), 'ロックをやめました'); } catch (e) { fail(e); }
       } }, 'ロックをやめる'),
       el('button', { type: 'button', class: 'btn', onClick: () => ctx.lockNow() }, '今すぐロック')
@@ -168,7 +170,7 @@ async function buildServerLockSection(ctx) {
   section.appendChild(el('label', { class: 'field-row' }, ['操作がないとき自動でロック', autoLockSelect(st.autoLockMinutes, async (m) => {
     try { after(await store.configureLock({ autoLockMinutes: m }), '自動ロックの時間を変えました'); } catch (e) { fail(e); }
   })]));
-  section.appendChild(el('p', { class: 'text-muted' }, 'パスワードを忘れたときは、このPCで次のコマンドを実行するとロックが外れます（データは消えません）: python -m lexmanager lock-reset'));
+  section.appendChild(el('p', { class: 'text-muted' }, 'パスワードを忘れたときは、このPCで、LexManagerのフォルダにある「LexManager-lock-reset.bat」をダブルクリックするとロックが外れます（データは消えません）。'));
   return section;
 }
 
@@ -228,7 +230,7 @@ async function renderServerMode(container, ctx) {
       }
     } }, '設定'),
     el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
-      const ok = await confirmDialog('APIキーをクリアします。よろしいですか？');
+      const ok = await confirmDialog('APIキーをクリアします（AI読取が使えなくなります）。よろしいですか？', { okLabel: 'クリアする', danger: true });
       if (!ok) return;
       try {
         await ctx.store.postSettings({ apiKey: '' });
@@ -246,29 +248,10 @@ async function renderServerMode(container, ctx) {
   // Googleカレンダー連携
   if (ctx.store.gcalStatus) container.appendChild(await buildGcalSection(ctx));
 
-  // LANアクセス
-  const lanSection = el('section', { class: 'section' });
-  lanSection.appendChild(el('h3', {}, 'LANアクセス'));
-  lanSection.appendChild(el('p', { class: 'text-muted' }, 'オンにすると、同じネットワーク（事務所のWi-Fi等）にある他の端末のブラウザから、このPCのLexManagerを開けるようになります（表示されるトークンが必要）。iPhoneはOneDrive経由で同期するため、通常はオフのままで構いません。'));
-  const lanCheckbox = el('input', { type: 'checkbox', checked: !!settings.lanAccess });
-  lanSection.appendChild(el('label', { class: 'field-row' }, [lanCheckbox, 'LANアクセスを許可する']));
-  if (settings.lanAccess && settings.lanToken) {
-    lanSection.appendChild(el('p', { class: 'text-muted' }, `トークン: ${settings.lanToken}`));
-  }
-  lanSection.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
-    try {
-      await ctx.store.postSettings({ lanAccess: lanCheckbox.checked });
-      ctx.toast('保存しました。反映には再起動が必要です', 'success');
-    } catch (e) {
-      ctx.toast('保存に失敗しました: ' + e.message, 'error');
-    }
-  } }, '保存'));
-  container.appendChild(lanSection);
-
   // 更新確認
   if (ctx.caps.update) {
     const updateSection = el('section', { class: 'section' });
-    updateSection.appendChild(el('h3', {}, 'Update'));
+    updateSection.appendChild(el('h3', {}, 'アプリの更新'));
     updateSection.appendChild(el('p', { class: 'text-muted' }, 'LexManager本体の新しい版がGitHubにあるかを確認し、あれば取り込みます。適用後はアプリの再起動が必要です。'));
     const statusBox = el('div', {}, '');
     updateSection.appendChild(statusBox);
@@ -281,9 +264,9 @@ async function renderServerMode(container, ctx) {
         } catch (e) {
           ctx.toast('確認に失敗しました: ' + e.message, 'error');
         }
-      } }, '確認'),
+      } }, '更新を確認'),
       el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-        const ok = await confirmDialog('更新を適用します。よろしいですか？');
+        const ok = await confirmDialog('新しい版を取り込みます。適用後はアプリの再起動が必要です。よろしいですか？', { okLabel: '適用する' });
         if (!ok) return;
         try {
           await ctx.store.updateApply();
@@ -291,7 +274,7 @@ async function renderServerMode(container, ctx) {
         } catch (e) {
           ctx.toast('更新に失敗しました: ' + e.message, 'error');
         }
-      } }, '適用')
+      } }, '更新を適用')
     ]));
     container.appendChild(updateSection);
   }
@@ -314,7 +297,7 @@ async function renderServerMode(container, ctx) {
       migStatusBox.appendChild(el('p', { class: 'text-error' }, '状態取得に失敗しました'));
     }
     migSection.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-      const ok = await confirmDialog('旧データからの移行を実行します。よろしいですか？');
+      const ok = await confirmDialog('旧データからの移行を実行します（旧データは変更されません）。よろしいですか？', { okLabel: '移行する' });
       if (!ok) return;
       try {
         const report = await ctx.store.migrationRun();
@@ -337,17 +320,21 @@ async function renderServerMode(container, ctx) {
     try {
       const st = await ctx.store.getMobileStatus();
       mobSection.appendChild(el('p', {}, `取り込み待ち: ${(st && st.inboxCount) || 0}件 ／ iPhone用データの作成: ${st && st.snapshotAt ? String(st.snapshotAt).slice(0, 16).replace('T', ' ') : '未作成'}`));
+      // 形式の誤り等で取り込めなかったファイルは mobile/failed に移される（中身は消えていない）
+      if (st && st.failedCount > 0) {
+        mobSection.appendChild(el('p', { class: 'text-error' }, `⚠ 取り込めなかった変更 ${st.failedCount}件（OneDriveの「LexManagerData」フォルダの「mobile」→「failed」に残っています）`));
+      }
     } catch (e) { /* 状態が取れなくても操作はできる */ }
     mobSection.appendChild(el('div', { class: 'field-row' }, [
       el('button', { type: 'button', class: 'btn', onClick: async () => {
-        if (!(await confirmDialog('iPhoneからの変更（mobile/inbox）を今すぐ取り込みます。よろしいですか？'))) return;
+        if (!(await confirmDialog('iPhoneからの変更を今すぐ取り込みます。よろしいですか？', { okLabel: '取り込む' }))) return;
         try {
           const r = await ctx.store.importMobile();
-          ctx.toast(`取込完了: 適用${r.applied || 0}件 / 統合${r.merged || 0}件 / 競合${r.conflicts || 0}件`, r.conflicts ? 'info' : 'success');
-        } catch (e) { ctx.toast('取込に失敗しました: ' + e.message, 'error'); }
+          ctx.toast(`取り込みました: 反映${r.applied || 0}件 ／ 統合${r.merged || 0}件 ／ 競合${r.conflicts || 0}件`, r.conflicts ? 'info' : 'success');
+        } catch (e) { ctx.toast('取り込みに失敗しました: ' + e.message, 'error'); }
       } }, 'iPhoneからの変更を取り込む'),
       el('button', { type: 'button', class: 'btn', onClick: async () => {
-        if (!(await confirmDialog('iPhone用のデータ（mobile/snapshot.json）を今すぐ作り直します。よろしいですか？'))) return;
+        if (!(await confirmDialog('iPhone用のデータを今すぐ作り直します。よろしいですか？', { okLabel: '作り直す' }))) return;
         try {
           await ctx.store.regenerateSnapshot();
           ctx.toast('iPhone用のデータを作り直しました', 'success');
@@ -380,7 +367,7 @@ async function renderServerMode(container, ctx) {
           ctx.toast('解決に失敗しました: ' + e.message, 'error');
         }
       };
-      // 項目ごとの選択ではなく「どちらを残すか」を選ぶ種類（iPhoneからの取込で起きるもの）
+      // 項目ごとの選択ではなく「どちらを残すか」を選ぶ種類（iPhoneからの取り込みで起きるもの）
       const SPECIAL = {
         '*deleted-on-pc*': { text: 'PCで削除済みのデータを、iPhoneで編集していました。', buttons: [['削除のままにする', 'current'], ['iPhoneの内容で復元する', 'other']] },
         '*delete*': { text: 'iPhoneで削除しましたが、PCで先に変更されていました。', buttons: [['PCの内容を残す', 'current'], ['削除する', 'delete']] },
@@ -401,11 +388,11 @@ async function renderServerMode(container, ctx) {
         const fieldChoices = {};
         for (const f of item.fields || []) {
           const sel = el('select', { class: 'field' }, [
-            el('option', { value: 'current' }, `${item.kind === 'mobile' ? 'PCの値' : '現在'}: ${JSON.stringify(item.current && item.current[f])}`),
-            el('option', { value: 'other' }, `${item.kind === 'mobile' ? 'iPhoneの値' : '他方'}: ${JSON.stringify(item.other && item.other[f])}`)
+            el('option', { value: 'current' }, `${item.kind === 'mobile' ? 'PCの内容' : '今の内容'}: ${formatFieldValue(item.current && item.current[f])}`),
+            el('option', { value: 'other' }, `${item.kind === 'mobile' ? 'iPhoneの内容' : 'もう一方の内容'}: ${formatFieldValue(item.other && item.other[f])}`)
           ]);
           fieldChoices[f] = sel;
-          itemBox.appendChild(el('label', {}, [f, sel]));
+          itemBox.appendChild(el('label', {}, [fieldLabel(f, item.coll), sel]));
         }
         itemBox.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
           const choice = {};
@@ -436,15 +423,15 @@ async function renderServerMode(container, ctx) {
   } catch (e) {
     backupSection.appendChild(el('p', { class: 'text-error' }, 'バックアップの状況を取得できませんでした'));
   }
-  backupSection.appendChild(el('p', { class: 'text-muted' }, '［保存］は、全データを1つのファイル（JSON）としてダウンロードします。OneDrive以外の場所にも控えを残したいときに使います。'));
-  backupSection.appendChild(el('a', { href: ctx.store.exportJsonUrl(), target: '_blank', rel: 'noopener', class: 'btn' }, '保存'));
+  backupSection.appendChild(el('p', { class: 'text-muted' }, '全データを1つのファイル（JSON形式）としてダウンロードします。OneDrive以外の場所にも控えを残したいときに使います。'));
+  backupSection.appendChild(el('a', { href: ctx.store.exportJsonUrl(), target: '_blank', rel: 'noopener', class: 'btn' }, 'データをファイルに保存（JSON）'));
   container.appendChild(backupSection);
 
   // アプリを終了
   const shutdownSection = el('section', { class: 'section' });
   shutdownSection.appendChild(el('h3', {}, 'アプリ'));
   shutdownSection.appendChild(el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
-    const ok = await confirmDialog('アプリを終了します。よろしいですか？');
+    const ok = await confirmDialog('アプリを終了します（ブラウザの画面は閉じても大丈夫です）。よろしいですか？', { okLabel: '終了する' });
     if (!ok) return;
     try {
       if (ctx.store.shutdown) {
@@ -478,7 +465,7 @@ async function buildGcalSection(ctx) {
   const fmt = (iso) => (iso ? String(iso).slice(0, 16).replace('T', ' ') : '');
 
   section.appendChild(el('p', { class: 'text-muted' },
-    'ToDoの「カレンダー登録」をオンにすると、選んだGoogleカレンダーに予定として登録します。そのカレンダーで追加した予定はToDoとして取り込みます。' +
+    'ToDoの「Googleカレンダーに登録」をオンにすると、選んだGoogleカレンダーに予定として登録します。そのカレンダーで追加した予定はToDoとして取り込みます。' +
     '削除は両方向に反映されます（Googleで消した予定のToDoはごみ箱へ）。同期はこのPCが起動中に10分ごと、またはホームの［同期］から行います。'));
 
   // ① Googleでの準備で得た値
@@ -508,7 +495,7 @@ async function buildGcalSection(ctx) {
     } }, st.connected ? 'ログインし直す' : 'Googleにログイン'),
     el('button', { type: 'button', class: 'btn', onClick: rerender }, '状態を更新'),
     st.connected ? el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
-      if (!(await confirmDialog('Googleカレンダーとの接続を解除します（予定やToDoは消えません）。よろしいですか？'))) return;
+      if (!(await confirmDialog('Googleカレンダーとの接続を解除します（予定やToDoは消えません）。よろしいですか？', { okLabel: '接続を解除する', danger: true }))) return;
       await ctx.store.gcalDisconnect();
       await rerender();
     } }, '接続を解除') : null
@@ -529,7 +516,7 @@ async function buildGcalSection(ctx) {
       calBox.appendChild(el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
         const opt = sel.selectedOptions[0];
         if (!opt) return;
-        if (!(await confirmDialog(`「${opt.textContent}」と同期します。このカレンダーの予定はToDoとして取り込まれます。よろしいですか？`))) return;
+        if (!(await confirmDialog(`「${opt.textContent}」と同期します。このカレンダーの予定はToDoとして取り込まれます。よろしいですか？`, { okLabel: 'このカレンダーと同期する' }))) return;
         await ctx.store.gcalSetCalendar(opt.value, opt.textContent.replace(/（メイン）$/, ''));
         await rerender();
       } }, 'このカレンダーにする'));
@@ -538,7 +525,7 @@ async function buildGcalSection(ctx) {
   section.appendChild(calBox);
 
   // TBDカレンダー（ツール「空き日程の検索」で確定した候補を登録する先）
-  section.appendChild(el('div', { class: 'section-sub' }, '空き日程の候補を登録するカレンダー（TBD）'));
+  section.appendChild(el('div', { class: 'section-sub' }, '空き日程の候補を登録するカレンダー（仮予定＝TBD）'));
   const tbdBox = el('div', { class: 'field-row' });
   tbdBox.appendChild(el('span', {}, st.tbdCalendarId ? `「${st.tbdCalendarName || st.tbdCalendarId}」` : '未選択'));
   tbdBox.appendChild(el('button', { type: 'button', class: 'btn', disabled: !st.connected, onClick: async () => {
@@ -624,7 +611,7 @@ async function buildOneDriveSection(ctx) {
       ctx.navigate('#/settings');
     } }, '今すぐ同期') : null,
     connected ? el('button', { type: 'button', class: 'btn btn-danger', onClick: async () => {
-      if (!(await ctx.confirm('OneDriveとの接続を解除します（この端末のデータは消えません。以後は手動の同期になります）。よろしいですか？'))) return;
+      if (!(await ctx.confirm('OneDriveとの接続を解除します（この端末のデータは消えません。以後は手動の同期になります）。よろしいですか？', { okLabel: '接続を解除する', danger: true }))) return;
       await store.clearOd();
       ctx.navigate('#/settings');
     } }, '接続を解除') : null
@@ -644,14 +631,14 @@ async function renderLocalMode(container, ctx) {
   const manualSection = el('section', { class: 'section' });
   const odOn = !!(store.getOd && store.getOd().refreshToken);
   manualSection.appendChild(el('h3', {}, odOn ? 'PCとのやり取り（手動・通常は不要）' : 'PCとのやり取り（手動）'));
-  manualSection.appendChild(el('p', { class: 'text-muted' }, '読込: PCが作った snapshot.json を選ぶ／書出し: この端末の変更をファイルにして、OneDriveの mobile/inbox に保存'));
+  manualSection.appendChild(el('p', { class: 'text-muted' }, '［PCのデータを読み込む］: PCが作ったファイル（OneDriveの「LexManagerData」フォルダの「mobile」にある snapshot.json）を選びます。［変更を書き出す］: この端末の変更をファイルにします。OneDriveの「LexManagerData」フォルダの「mobile」→「inbox」に保存してください。'));
   const fileInput = el('input', { type: 'file', accept: 'application/json', hidden: true });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file || !store.importSnapshot) return;
     try {
       if (store.hasUnexportedChanges && await store.hasUnexportedChanges()) {
-        const ok = await ctx.confirm('この端末には、まだ書き出していない変更があります。読み込むとその変更は消えます。先に［変更を書き出す］を行うことをお勧めします。このまま読み込みますか？');
+        const ok = await ctx.confirm('この端末には、まだ書き出していない変更があります。読み込むとその変更は消えます。先に［変更を書き出す］を行うことをお勧めします。このまま読み込みますか？', { okLabel: '変更を捨てて読み込む', danger: true });
         if (!ok) { fileInput.value = ''; return; }
       }
       const r = await store.importSnapshot(file);
@@ -660,7 +647,7 @@ async function renderLocalMode(container, ctx) {
       await ctx.refresh();
       ctx.navigate('#/home');
     } catch (e) {
-      ctx.toast('読込に失敗しました: ' + e.message, 'error');
+      ctx.toast('読み込みに失敗しました: ' + e.message, 'error');
     }
   });
   let pending = 0;
@@ -674,10 +661,10 @@ async function renderLocalMode(container, ctx) {
     if (!store.exportChanges) { ctx.toast('この端末では利用できません', 'error'); return; }
     try {
       const r = await store.exportChanges();
-      ctx.toast(`${r.count}件の変更を書き出しました。OneDriveの LexManagerData/mobile/inbox に保存してください`, 'success');
+      ctx.toast(`${r.count}件の変更を書き出しました。OneDriveの「LexManagerData」フォルダの「mobile」→「inbox」に保存してください`, 'success');
       ctx.navigate('#/settings');
     } catch (e) {
-      ctx.toast('書出しに失敗しました: ' + e.message, 'error');
+      ctx.toast('書き出しに失敗しました: ' + e.message, 'error');
     }
   } }, `変更を書き出す（${pending}件）`));
   manualSection.appendChild(manualRow);
@@ -691,13 +678,13 @@ async function renderLocalMode(container, ctx) {
   } catch (e) { /* ignore */ }
   if (legacyData) {
     const legacySection = el('section', { class: 'section' });
-    legacySection.appendChild(el('h3', {}, '旧iPhone版データの書出し'));
+    legacySection.appendChild(el('h3', {}, '旧iPhone版データの書き出し'));
     legacySection.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
       try {
         await store.exportLegacyIphoneData();
         ctx.toast('書き出しました', 'success');
       } catch (e) {
-        ctx.toast('書出しに失敗しました: ' + e.message, 'error');
+        ctx.toast('書き出しに失敗しました: ' + e.message, 'error');
       }
     } }, '書き出す'));
     container.appendChild(legacySection);

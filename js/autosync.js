@@ -4,6 +4,7 @@
 // 2. 書き出したファイルがPCに取り込まれた（inbox から消えた）かを確かめる
 // 3. 取り込み待ちがなく、PCのデータ（mobile/snapshot.json）が新しくなっていれば読み込む
 //    （この端末の未送信の変更を、古いPCデータで上書きしないため。shouldImportSnapshot 参照）
+//    ダウンロード中に変更が入ることがあるので、読み込む直前（store.importSnapshot の中でも）もう一度確かめる
 import { ReauthError, refreshTokens, itemPath, getItem, downloadText, putText } from './util/onedrive.js';
 
 const t = (iso) => (iso ? new Date(iso).getTime() : 0);
@@ -52,6 +53,7 @@ export class AutoSync {
   /** 1回分の同期。結果は store の od.lastSync / lastError / needLogin に残す */
   async run() {
     if (this.running || !this.connected() || (this.store.isLocked && this.store.isLocked())) return null;
+    if (this.store.isStale && this.store.isStale()) return null; // 別の画面で更新された（開き直すまで同期しない）
     if (!navigator.onLine) return null;
     this.running = true;
     const result = { sent: 0, imported: false };
@@ -90,9 +92,14 @@ export class AutoSync {
       });
       if (ok) {
         const text = await downloadText(snap);
-        await this.store.importSnapshot({ text: async () => text });
-        await this.store.setOd({ snapshotModified: snap.lastModifiedDateTime });
-        result.imported = true;
+        // ダウンロードしている間に、この端末で変更されていたら読み込まない（次回の同期で先に送る）
+        if (!(await this.store.hasUnexportedChanges())) {
+          const r = await this.store.importSnapshot({ text: async () => text }, { onlyIfNoUnexported: true });
+          if (!(r && r.skipped)) {
+            await this.store.setOd({ snapshotModified: snap.lastModifiedDateTime });
+            result.imported = true;
+          }
+        }
       }
       // PCのGoogleカレンダー連携の状態（設定画面の表示用。読めなくても同期は成功扱い）
       try {

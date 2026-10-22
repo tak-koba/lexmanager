@@ -29,7 +29,7 @@ export async function render(container, params, ctx) {
   ]);
   const syncPanel = el('div', { class: 'sync-panel', hidden: true });
   // ［同期］: PC と、OneDrive自動同期につないだiPhoneは押したらすぐ同期（確認なし）。
-  // OneDriveにつないでいないiPhoneだけ、従来どおり Import／Export を選ぶパネルを開く。
+  // OneDriveにつないでいないiPhoneだけ、従来どおり「PCのデータを読み込む」「変更を書き出す」を選ぶパネルを開く。
   const syncBtn = el('button', { type: 'button', class: 'btn btn-primary sync-btn', 'aria-expanded': 'false', onClick: async () => {
     const rerender = () => render(container, params, ctx);
     if (!ctx.caps.local) return syncNowPc(ctx, syncBtn, rerender);
@@ -45,7 +45,7 @@ export async function render(container, params, ctx) {
 
   const body = el('div', { class: 'home-grid' });
   container.appendChild(body);
-  body.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  body.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
 
   let all;
   try {
@@ -79,7 +79,7 @@ async function syncNowIphone(ctx, btn, rerender) {
   await busy(btn, () => ctx.autosync.run());
   const s = ctx.store.getOd();
   if (s.needLogin) {
-    if (await ctx.confirm('OneDriveのログインの期限が切れています。再ログインしますか？')) {
+    if (await ctx.confirm('OneDriveのログインの期限が切れています。再ログインしますか？', { okLabel: '再ログインする' })) {
       const { startLogin } = await import('../util/onedrive.js');
       await startLogin(s.clientId);
     }
@@ -99,7 +99,7 @@ async function syncNowPc(ctx, btn, rerender, force = false) {
       const st = ctx.store.getMobileStatus ? await ctx.store.getMobileStatus() : {};
       if (st && st.inboxCount) {
         const r = await ctx.store.importMobile();
-        parts.push(`iPhoneから取込${r.applied || 0}件${r.conflicts ? `（競合${r.conflicts}件）` : ''}`);
+        parts.push(`iPhoneから取り込み${r.applied || 0}件${r.conflicts ? `（競合${r.conflicts}件）` : ''}`);
       }
       if (ctx.store.regenerateSnapshot) await ctx.store.regenerateSnapshot();
     } catch (e) {
@@ -112,7 +112,7 @@ async function syncNowPc(ctx, btn, rerender, force = false) {
         const { result } = await ctx.store.gcalSync(force);
         if (result.held && result.held.length && !force) {
           const msg = result.held.map((h) => '・' + HELD_LABEL[h.kind](h.count)).join('\n');
-          if (await ctx.confirm(`Googleカレンダー: 件数が多いため、次の処理を止めています。実行してよいですか？\n${msg}`)) {
+          if (await ctx.confirm(`Googleカレンダー: 件数が多いため、次の処理を止めています。実行してよいですか？\n${msg}`, { okLabel: '実行する' })) {
             const again = await ctx.store.gcalSync(true);
             parts.push(`Googleカレンダー: ${gcalSummary(again.result)}`);
           } else {
@@ -131,8 +131,9 @@ async function syncNowPc(ctx, btn, rerender, force = false) {
   rerender();
 }
 
-// ---------------- 同期（OneDriveにつないでいないiPhone: Import / Export） ----------------
-// Import = PCのデータ（snapshot.json）を読み込む、Export = iPhoneでの変更を書き出す（PCは1分ごとに自動で取り込む）
+// ---------------- 同期（OneDriveにつないでいないiPhone: 手動の読み込み・書き出し） ----------------
+// 読み込み = PCのデータ（snapshot.json）を読み込む、書き出し = iPhoneでの変更を書き出す（PCは1分ごとに自動で取り込む）
+// 表示の文言は設定の「PCとのやり取り（手動）」とそろえる
 async function fillSyncPanel(panel, ctx, rerender) {
   clear(panel);
   const store = ctx.store;
@@ -147,16 +148,16 @@ async function fillSyncPanel(panel, ctx, rerender) {
     el('span', { class: 'sync-card-desc' }, desc),
     info ? el('span', { class: 'sync-card-info text-muted' }, info) : null
   ]);
-  panel.appendChild(card('Import', 'PCのデータ（snapshot.json）を読み込み、この端末のデータを置き換えます',
-    `前回の読込: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
-  panel.appendChild(card('Export', 'この端末で変更した内容を書き出します（PCで取り込みます）',
-    `未書出しの変更: ${status.pending || 0}件 ／ 前回の書出し: ${fmt(status.lastExportAt)}`, () => iphoneExport(ctx, status.pending || 0, rerender)));
-  panel.appendChild(el('p', { class: 'text-muted' }, '設定 → OneDrive自動同期 につなぐと、この操作は不要になります。'));
+  panel.appendChild(card('PCのデータを読み込む', 'PCが作ったデータを読み込み、この端末のデータを置き換えます',
+    `前回の読み込み: ${fmt(status.snapshotAt)}`, () => iphoneImport(ctx, rerender)));
+  panel.appendChild(card('変更を書き出す', 'この端末で変更した内容をファイルに書き出します（PCで取り込みます）',
+    `まだ書き出していない変更: ${status.pending || 0}件 ／ 前回の書き出し: ${fmt(status.lastExportAt)}`, () => iphoneExport(ctx, status.pending || 0, rerender)));
+  panel.appendChild(el('p', { class: 'text-muted' }, '設定の「OneDrive自動同期」でOneDriveにつなぐと、この操作は不要になります。'));
 }
 
 function gcalSummary(r) {
   const parts = [];
-  if (r.imported) parts.push(`取込${r.imported}件`);
+  if (r.imported) parts.push(`取り込み${r.imported}件`);
   if (r.created) parts.push(`予定登録${r.created}件`);
   if (r.updatedTodos + r.updatedEvents) parts.push(`更新${r.updatedTodos + r.updatedEvents}件`);
   if (r.deletedEvents) parts.push(`予定削除${r.deletedEvents}件`);
@@ -170,18 +171,18 @@ const HELD_LABEL = {
   deleteEvents: (n) => `LexManagerで削除・登録解除したToDoの予定 ${n}件を、Googleから削除します`
 };
 
-/** iPhoneの Import: 確認画面の中でファイルを選ぶ（iPhoneでは、ボタンを押した流れの中でないとファイル選択を開けないため）。 */
+/** iPhoneの「PCのデータを読み込む」: 確認画面の中でファイルを選ぶ（iPhoneでは、ボタンを押した流れの中でないとファイル選択を開けないため）。 */
 async function iphoneImport(ctx, rerender) {
   const store = ctx.store;
   let unexported = false;
   try { unexported = store.hasUnexportedChanges ? await store.hasUnexportedChanges() : false; } catch (e) { /* ignore */ }
   const fileInput = el('input', { type: 'file', accept: 'application/json,.json' });
   const body = el('div', { class: 'field-stack' }, [
-    el('p', {}, 'OneDriveの LexManagerData → mobile → snapshot.json を選ぶと、この端末のデータがPCの内容に置き換わります。'),
-    unexported ? el('p', { class: 'text-error' }, '⚠ まだ書き出していない変更があります。読み込むとその変更は消えます。先に Export することをお勧めします。') : null,
-    el('label', { class: 'btn btn-primary file-btn' }, [fileInput, 'snapshot.json を選んで読み込む'])
+    el('p', {}, 'OneDriveの「LexManagerData」フォルダの「mobile」にあるファイル（snapshot.json）を選ぶと、この端末のデータがPCの内容に置き換わります。'),
+    unexported ? el('p', { class: 'text-error' }, '⚠ まだ書き出していない変更があります。読み込むとその変更は消えます。先に［変更を書き出す］を行うことをお勧めします。') : null,
+    el('label', { class: 'btn btn-primary file-btn' }, [fileInput, 'ファイルを選んで読み込む'])
   ]);
-  const dlg = ctx.openDialog({ title: 'Import（PCのデータを読み込む）', bodyNode: body, actions: [{ label: 'キャンセル', onClick: () => {} }] });
+  const dlg = ctx.openDialog({ title: 'PCのデータを読み込む', bodyNode: body, actions: [{ label: 'キャンセル', onClick: () => {} }] });
   fileInput.addEventListener('change', async () => {
     const file = fileInput.files[0];
     if (!file) return;
@@ -192,20 +193,20 @@ async function iphoneImport(ctx, rerender) {
       await ctx.refresh();
       rerender();
     } catch (e) {
-      ctx.toast('読込に失敗しました: ' + e.message, 'error');
+      ctx.toast('読み込みに失敗しました: ' + e.message, 'error');
     }
   });
 }
 
 async function iphoneExport(ctx, pending, rerender) {
-  if (!pending && !(await ctx.confirm('書き出していない変更はありません。それでも書き出しますか？'))) return;
-  if (pending && !(await ctx.confirm(`この端末での変更 ${pending}件を書き出します。保存先は OneDrive の LexManagerData → mobile → inbox を選んでください。よろしいですか？`))) return;
+  if (!pending && !(await ctx.confirm('書き出していない変更はありません。それでも書き出しますか？', { okLabel: '書き出す' }))) return;
+  if (pending && !(await ctx.confirm(`この端末での変更 ${pending}件を書き出します。保存先は、OneDriveの「LexManagerData」フォルダの「mobile」→「inbox」を選んでください。よろしいですか？`, { okLabel: '書き出す' }))) return;
   try {
     const r = await ctx.store.exportChanges();
-    ctx.toast(`${r.count}件の変更を書き出しました。OneDriveの LexManagerData/mobile/inbox に保存してください`, 'success');
+    ctx.toast(`${r.count}件の変更を書き出しました。OneDriveの「LexManagerData」フォルダの「mobile」→「inbox」に保存してください`, 'success');
     rerender();
   } catch (e) {
-    ctx.toast('書出しに失敗しました: ' + e.message, 'error');
+    ctx.toast('書き出しに失敗しました: ' + e.message, 'error');
   }
 }
 
@@ -263,11 +264,13 @@ function buildTodoSection(todos, ctx) {
     else if (kind === 'today') today++;
     else if (kind === 'soon') week++;
   }
-  section.appendChild(el('div', { class: 'stat-row' }, [
-    el('span', { class: 'chip' }, `超過 ${overdue}`),
-    el('span', { class: 'chip' }, `本日 ${today}`),
-    el('span', { class: 'chip' }, `今週 ${week}`),
-    el('span', { class: 'chip' }, `期限なし ${none}`)
+  // 件数の集計（押せないので、押せるチップと区別して枠なしのラベルで表示）
+  const stat = (label, n) => el('span', { class: 'stat-label' }, [label, el('strong', {}, String(n))]);
+  section.appendChild(el('div', { class: 'stat-row', role: 'group', 'aria-label': '未完了のToDoの件数' }, [
+    stat('超過', overdue),
+    stat('本日', today),
+    stat('7日以内', week),
+    stat('期限なし', none)
   ]));
 
   const top = open
@@ -279,6 +282,7 @@ function buildTodoSection(todos, ctx) {
   for (const t of top) {
     const cb = el('input', {
       type: 'checkbox',
+      'aria-label': `「${todoTaskText(t)}」を完了にする`,
       onClick: async (ev) => {
         ev.stopPropagation();
         try {
@@ -329,7 +333,7 @@ function buildRecentSection(all, ctx) {
   return section;
 }
 
-// 要対応: 放置すると困るもの（PC: 他端末との競合・iPhoneからの取込待ち・旧データ移行、iPhone: 未書出しの変更）。
+// 要対応: 放置すると困るもの（PC: 他端末との競合・iPhoneからの取り込み待ち・旧データ移行、iPhone: まだ書き出していない変更）。
 // 該当がなければ何も表示しない（null を返す）。
 async function buildAttentionSection(ctx) {
   const section = el('section', { class: 'section section-attention' });
@@ -356,7 +360,7 @@ async function buildAttentionSection(ctx) {
       const n = await ctx.store.pendingChangesCount();
       if (n > 0) {
         any = true;
-        list.appendChild(el('li', { class: 'list-row' }, `この端末に、PCへ書き出していない変更が ${n} 件あります（同期 → Export）`));
+        list.appendChild(el('li', { class: 'list-row' }, `この端末に、PCへ書き出していない変更が ${n} 件あります（ホームの［同期］→［変更を書き出す］）`));
       }
     } catch (e) { /* ignore */ }
   }
@@ -378,7 +382,7 @@ async function buildAttentionSection(ctx) {
       const n = (status && status.inboxCount) || 0;
       if (n > 0) {
         any = true;
-        list.appendChild(el('li', { class: 'list-row' }, `iPhoneからの取込待ちが ${n} 件あります（同期 → Import）`));
+        list.appendChild(el('li', { class: 'list-row' }, `iPhoneからの取り込み待ちが ${n} 件あります（ホームの［同期］を押してください）`));
       }
     } catch (e) { /* ignore */ }
   }
@@ -389,14 +393,14 @@ async function buildAttentionSection(ctx) {
       const r = g.result || {};
       if (g.connected && g.reauth) {
         any = true;
-        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, 'Googleカレンダーへの再ログインが必要です（設定 → Googleカレンダー連携 → ログインし直す）'));
+        list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, 'Googleカレンダーへの再ログインが必要です（設定の「Googleカレンダー連携」で［ログインし直す］）'));
       } else if (g.connected && g.error) {
         any = true;
         list.appendChild(el('li', { class: 'list-row', onClick: () => ctx.navigate('#/settings') }, `Googleカレンダーの同期でエラーがありました: ${g.error}`));
       }
       if (r.held && r.held.length) {
         any = true;
-        list.appendChild(el('li', { class: 'list-row' }, `Googleカレンダー: 件数が多いため止めている処理があります（同期 → Googleカレンダー で確認）`));
+        list.appendChild(el('li', { class: 'list-row' }, `Googleカレンダー: 件数が多いため止めている処理があります（ホームの［同期］を押すと、内容を確認して実行できます）`));
       }
       if (r.conflicts && r.conflicts.length) {
         any = true;

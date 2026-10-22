@@ -35,7 +35,7 @@ export async function render(container, params, ctx) {
   container.appendChild(chipRow);
 
   const listBox = el('div', { class: 'list-box' });
-  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
   container.appendChild(listBox);
 
   let todos = [];
@@ -232,7 +232,7 @@ export async function render(container, params, ctx) {
   }
 
   async function cancelEdit() {
-    if (dirty && !(await confirmDialog('編集内容を破棄しますか？'))) return;
+    if (dirty && !(await confirmDialog('編集内容を破棄しますか？', { okLabel: '破棄する', danger: true }))) return;
     editingKey = null; editor = null; dirty = false;
     renderList();
   }
@@ -250,7 +250,7 @@ export async function render(container, params, ctx) {
   }
 
   async function linkGroup(g, caseObj) {
-    if (!(await confirmDialog(`「${g.label}」のToDo ${g.items.length}件を案件「${caseObj.caseName}」に紐付けますか？（案件名のテキストは残ります）`))) return;
+    if (!(await confirmDialog(`「${g.label}」のToDo ${g.items.length}件を案件「${caseObj.caseName}」に紐付けますか？（案件名のテキストは残ります）`, { okLabel: '紐付ける' }))) return;
     const { ok, failed } = await commitTodoPlan(ctx, {
       creates: [], removes: [], updates: g.items.map((t) => ({ base: t, payload: { ...t, caseId: caseObj.id } }))
     });

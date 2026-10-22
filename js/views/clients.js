@@ -13,7 +13,7 @@ export async function render(container, params, ctx) {
   const state = persisted;
 
   const toolbar = el('div', { class: 'toolbar' });
-  const searchInput = el('input', { type: 'search', placeholder: '氏名・かな・会社名・電話・メールで検索', class: 'field', value: state.q });
+  const searchInput = el('input', { type: 'search', placeholder: '氏名・かな・会社名・電話・メールで検索', class: 'field', value: state.q, 'aria-label': '顧客を検索' });
   searchInput.addEventListener('input', () => { state.q = searchInput.value; renderList(); });
   toolbar.appendChild(searchInput);
 
@@ -30,12 +30,12 @@ export async function render(container, params, ctx) {
   ], state.retainerFilter, (v) => { state.retainerFilter = v; renderList(); });
 
   const archChips = makeChipGroup(chipRow, [
-    { value: 'active', label: '進行中' },
-    { value: 'archived', label: 'アーカイブ' },
+    { value: 'active', label: '取引中' },
+    { value: 'archived', label: '取引終了' },
     { value: 'all', label: 'すべて' }
   ], state.archFilter, (v) => { state.archFilter = v; renderList(); });
 
-  const sortSelect = el('select', { class: 'field' }, [
+  const sortSelect = el('select', { class: 'field', 'aria-label': '並び順' }, [
     el('option', { value: 'kana' }, '五十音'),
     el('option', { value: 'registeredAt' }, '登録日'),
     el('option', { value: 'updatedAt' }, '更新日')
@@ -53,7 +53,7 @@ export async function render(container, params, ctx) {
   container.appendChild(el('div', { class: 'toolbar' }, [sortSelect, newBtn]));
 
   const listBox = el('div', { class: 'list-box' });
-  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中...'));
+  listBox.appendChild(el('p', { class: 'text-muted' }, '読み込み中…'));
   container.appendChild(listBox);
 
   let clients = [];
@@ -119,7 +119,7 @@ export async function render(container, params, ctx) {
         clientTypeChip(c),
         el('span', { class: 'list-row-name' }, displayName(c) || '(名称未設定)'),
         el('span', { class: 'text-muted' }, phone),
-        c.isArchived ? el('span', { class: 'chip' }, 'アーカイブ') : null
+        c.isArchived ? el('span', { class: 'chip' }, '取引終了') : null
       ]));
     }
     listBox.appendChild(list);
