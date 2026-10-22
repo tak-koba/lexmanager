@@ -9,8 +9,10 @@ import {
   displayName, opponentName, sortByKana, formatDate, formatDateTime, newId,
   renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, dateTimeInputs, defaultTodo, runAiExtractFlow,
   todoViewRow, todoGroupEditor, commitTodoPlan,
-  editBar
+  editBar, takeNewDraft
 } from './_shared.js';
+import { defaultCase } from '../model.js';
+import { todayIso } from '../ui/dates.js';
 import { confirmDialog } from '../ui/dialog.js';
 
 const TRIAL_TYPES = ['', '調停', '訴訟', '強制執行', 'その他'];
@@ -34,7 +36,10 @@ export async function render(container, params, ctx) {
     container.appendChild(el('p', { class: 'text-error' }, '取得に失敗しました: ' + e.message));
     return;
   }
-  let record = (all.cases || []).find((c) => c.id === id);
+  // 新規（#/cases/new）: クイック登録の「すべての項目を入力…」から。保存するまで登録しない
+  const isNew = id === 'new';
+  let record = isNew ? (takeNewDraft('cases') || { ...defaultCase('client'), registeredAt: todayIso() })
+    : (all.cases || []).find((c) => c.id === id);
   clear(container);
   if (!record) {
     container.appendChild(el('p', { class: 'text-error' }, '案件が見つかりません'));
@@ -63,7 +68,7 @@ export async function render(container, params, ctx) {
 
   // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて保存する。
   // ToDoも一緒に編集し、案件の保存に成功したあとでToDoの変更を保存する。
-  let editMode = false;
+  let editMode = isNew;
   let collectors = [];
   let todoEditor = null;
   // 一覧枠の戻るボタンを編集バーの左端へ移す（1行にまとめる）
@@ -76,10 +81,13 @@ export async function render(container, params, ctx) {
     root.appendChild(editBar(editMode, {
       onEdit: () => { editMode = true; setDirty(false); renderAll(); },
       onCancel: async () => {
-        if (dirty && !(await confirmDialog('編集内容を破棄しますか？'))) return;
-        editMode = false; setDirty(false); renderAll();
+        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？'))) return;
+        setDirty(false);
+        if (isNew) { editMode = false; ctx.navigate('#/cases'); return; }
+        editMode = false; renderAll();
       },
-      onSave: saveAll
+      onSave: saveAll,
+      ...(isNew ? { label: '新規登録（未保存）', saveLabel: '登録' } : {})
     }, backLink));
     root.appendChild(buildHeaderSection());
     if (record.caseType === 'client') root.appendChild(buildOverviewSection());
@@ -104,6 +112,24 @@ export async function render(container, params, ctx) {
     const plan = todoEditor ? todoEditor.collect() : null;
     if (plan && plan.errors.length) { ctx.toast(plan.errors[0], 'error'); return; }
     const edited = Object.assign({}, ...collectors.map((f) => f()));
+    if (isNew) {
+      let created;
+      try {
+        created = await ctx.store.create('cases', { ...record, ...edited });
+      } catch (e) {
+        ctx.toast('登録に失敗しました: ' + e.message, 'error');
+        return;
+      }
+      ctx.toast('案件を登録しました', 'success');
+      if (plan && plan.creates.length) {
+        plan.creates = plan.creates.map((t) => ({ ...t, caseId: created.id })); // 新規案件のToDoは登録した案件に紐付ける
+        const { failed } = await commitTodoPlan(ctx, { ...plan, updates: [], removes: [] });
+        if (failed) ctx.toast(`ToDo ${failed}件を保存できませんでした`, 'error');
+      }
+      editMode = false; setDirty(false);
+      ctx.navigate(`#/cases/${created.id}`);
+      return;
+    }
     const saved = await saveRecord(ctx, 'cases', record, { ...record, ...edited });
     if (!saved) return;
     record = saved;

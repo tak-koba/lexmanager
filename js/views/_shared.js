@@ -156,7 +156,7 @@ export function clientTypeChip(c) {
  * 詳細画面の一括編集バー。閲覧中は［編集］、編集中は［キャンセル］［保存］。
  * lead（戻るボタン等）は閲覧中だけ左端に置く（狭い画面で1行にまとめるため）。
  */
-export function editBar(editMode, { onEdit, onCancel, onSave }, lead) {
+export function editBar(editMode, { onEdit, onCancel, onSave, label = '編集中', saveLabel = '保存' }, lead) {
   if (!editMode) {
     return el('div', { class: 'edit-bar' }, [
       lead || null,
@@ -164,13 +164,21 @@ export function editBar(editMode, { onEdit, onCancel, onSave }, lead) {
     ]);
   }
   return el('div', { class: 'edit-bar editing' }, [
-    el('span', { class: 'edit-bar-label' }, '編集中'),
+    el('span', { class: 'edit-bar-label' }, label),
     el('button', { type: 'button', class: 'btn', onClick: onCancel }, 'キャンセル'),
-    el('button', { type: 'button', class: 'btn btn-primary', onClick: onSave }, '保存')
+    el('button', { type: 'button', class: 'btn btn-primary', onClick: onSave }, saveLabel)
   ]);
 }
 
 // ---------------- クイック登録ダイアログ ----------------
+
+// 「すべての項目を入力…」で詳細画面（#/clients/new・#/cases/new）へ渡す未保存の下書き。保存するまで登録しない
+const newDrafts = {};
+export function takeNewDraft(coll) {
+  const d = newDrafts[coll];
+  delete newDrafts[coll];
+  return d || null;
+}
 
 export function quickCreateClientDialog(ctx) {
   return new Promise((resolve) => {
@@ -249,35 +257,12 @@ export function quickCreateClientDialog(ctx) {
       bodyNode: form,
       actions: [
         { label: 'キャンセル', onClick: () => resolve(null) },
+        { label: 'すべての項目を入力…', onClick: () => { newDrafts.clients = buildRec(); resolve({ id: 'new', draft: true }); } },
         {
           label: '登録',
           primary: true,
           onClick: async () => {
-            const data = new FormData(form);
-            const rec = defaultClient(type);
-            if (type === 'individual') {
-              rec.lastName = data.get('lastName') || '';
-              rec.firstName = data.get('firstName') || '';
-              rec.lastNameKana = data.get('lastNameKana') || '';
-              rec.firstNameKana = data.get('firstNameKana') || '';
-            } else {
-              rec.companyName = data.get('companyName') || '';
-              rec.companyNameKana = data.get('companyNameKana') || '';
-              rec.repTitle = data.get('repTitle') || '';
-              rec.representative = data.get('representative') || '';
-              rec.email = data.get('email') || '';
-              rec.repIsContact = data.get('repIsContact') === 'on';
-              if (!rec.repIsContact) {
-                const cp = {
-                  name: data.get('cpName') || '', title: data.get('cpTitle') || '', dept: '',
-                  tel: data.get('cpTel') || '', email: data.get('cpEmail') || '', homeAddr: ''
-                };
-                if (cp.name || cp.tel || cp.email) rec.contactPersons = [cp];
-              }
-            }
-            const phone = data.get('phone') || '';
-            if (phone) rec.phones = [{ type: type === 'corporate' ? '会社' : '携帯電話', number: phone }];
-            rec.registeredAt = todayIso();
+            const rec = buildRec();
             try {
               const created = await ctx.store.create('clients', rec);
               ctx.toast('顧客を登録しました', 'success');
@@ -291,6 +276,35 @@ export function quickCreateClientDialog(ctx) {
       ]
     });
     void dlg;
+
+    function buildRec() {
+      const data = new FormData(form);
+      const rec = defaultClient(type);
+      if (type === 'individual') {
+        rec.lastName = data.get('lastName') || '';
+        rec.firstName = data.get('firstName') || '';
+        rec.lastNameKana = data.get('lastNameKana') || '';
+        rec.firstNameKana = data.get('firstNameKana') || '';
+      } else {
+        rec.companyName = data.get('companyName') || '';
+        rec.companyNameKana = data.get('companyNameKana') || '';
+        rec.repTitle = data.get('repTitle') || '';
+        rec.representative = data.get('representative') || '';
+        rec.email = data.get('email') || '';
+        rec.repIsContact = data.get('repIsContact') === 'on';
+        if (!rec.repIsContact) {
+          const cp = {
+            name: data.get('cpName') || '', title: data.get('cpTitle') || '', dept: '',
+            tel: data.get('cpTel') || '', email: data.get('cpEmail') || '', homeAddr: ''
+          };
+          if (cp.name || cp.tel || cp.email) rec.contactPersons = [cp];
+        }
+      }
+      const phone = data.get('phone') || '';
+      if (phone) rec.phones = [{ type: type === 'corporate' ? '会社' : '携帯電話', number: phone }];
+      rec.registeredAt = todayIso();
+      return rec;
+    }
   });
 }
 
@@ -316,19 +330,25 @@ export function quickCreateCaseDialog(ctx, clients) {
     form.appendChild(el('label', {}, ['案件名', nameInput]));
     form.appendChild(el('label', {}, ['依頼者（複数選択可）', clientSelect]));
 
+    function buildRec() {
+      const rec = defaultCase(caseType);
+      rec.caseName = nameInput.value || '';
+      rec.clientIds = Array.from(clientSelect.selectedOptions).map((o) => o.value);
+      rec.registeredAt = todayIso();
+      return rec;
+    }
+
     openDialog({
       title: '新規案件（クイック登録）',
       bodyNode: form,
       actions: [
         { label: 'キャンセル', onClick: () => resolve(null) },
+        { label: 'すべての項目を入力…', onClick: () => { newDrafts.cases = buildRec(); resolve({ id: 'new', draft: true }); } },
         {
           label: '登録',
           primary: true,
           onClick: async () => {
-            const rec = defaultCase(caseType);
-            rec.caseName = nameInput.value || '';
-            rec.clientIds = Array.from(clientSelect.selectedOptions).map((o) => o.value);
-            rec.registeredAt = todayIso();
+            const rec = buildRec();
             try {
               const created = await ctx.store.create('cases', rec);
               ctx.toast('案件を登録しました', 'success');

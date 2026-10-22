@@ -7,8 +7,10 @@ import {
   displayName, kanaName, sortByKana, PHONE_TYPES, formatDate,
   telLink, mailLink, copyButton, addressDisplayRow, zipLookupButton, addressSearchButton,
   kanaAssistPair, sectionHeader, saveRecord, deleteRecordButton, quickCreateCaseDialog, runAiExtractFlow,
-  clientTypeChip, editBar
+  clientTypeChip, editBar, takeNewDraft
 } from './_shared.js';
+import { defaultClient } from '../model.js';
+import { todayIso } from '../ui/dates.js';
 import { confirmDialog } from '../ui/dialog.js';
 
 export async function render(container, params, ctx) {
@@ -29,7 +31,10 @@ export async function render(container, params, ctx) {
     container.appendChild(el('p', { class: 'text-error' }, '取得に失敗しました: ' + e.message));
     return;
   }
-  let record = (all.clients || []).find((c) => c.id === id);
+  // 新規（#/clients/new）: クイック登録の「すべての項目を入力…」から。保存するまで登録しない
+  const isNew = id === 'new';
+  let record = isNew ? (takeNewDraft('clients') || { ...defaultClient('individual'), registeredAt: todayIso() })
+    : (all.clients || []).find((c) => c.id === id);
   clear(container);
   if (!record) {
     container.appendChild(el('p', { class: 'text-error' }, '顧客が見つかりません'));
@@ -66,7 +71,7 @@ export async function render(container, params, ctx) {
 
   // 一括編集: 編集中は全セクションが入力欄になり、上部バーの［保存］でまとめて1回保存する。
   // 関連案件・名刺/添付（即時保存の操作）は編集中は表示しない（入力途中の内容が消えるのを防ぐ）。
-  let editMode = false;
+  let editMode = isNew;
   let collectors = [];
   // 一覧枠の戻るボタンを編集バーの左端へ移す（1行にまとめる）
   const backLink = container.parentElement && container.parentElement.querySelector(':scope > .back-link');
@@ -78,10 +83,13 @@ export async function render(container, params, ctx) {
     root.appendChild(editBar(editMode, {
       onEdit: () => { editMode = true; setDirty(false); renderAll(); },
       onCancel: async () => {
-        if (dirty && !(await confirmDialog('編集内容を破棄しますか？'))) return;
-        editMode = false; setDirty(false); renderAll();
+        if (dirty && !(await confirmDialog(isNew ? '入力内容を破棄して、登録をやめますか？' : '編集内容を破棄しますか？'))) return;
+        setDirty(false);
+        if (isNew) { editMode = false; ctx.navigate('#/clients'); return; }
+        editMode = false; renderAll();
       },
-      onSave: saveAll
+      onSave: saveAll,
+      ...(isNew ? { label: '新規登録（未保存）', saveLabel: '登録' } : {})
     }, backLink));
     root.appendChild(buildHeaderSection());
     root.appendChild(buildContactSection());
@@ -103,6 +111,17 @@ export async function render(container, params, ctx) {
 
   async function saveAll() {
     const edited = Object.assign({}, ...collectors.map((f) => f()));
+    if (isNew) {
+      try {
+        const created = await ctx.store.create('clients', { ...record, ...edited });
+        ctx.toast('顧客を登録しました', 'success');
+        editMode = false; setDirty(false);
+        ctx.navigate(`#/clients/${created.id}`);
+      } catch (e) {
+        ctx.toast('登録に失敗しました: ' + e.message, 'error');
+      }
+      return;
+    }
     const saved = await saveRecord(ctx, 'clients', record, { ...record, ...edited });
     if (saved) {
       record = saved;
