@@ -3,6 +3,7 @@
 import { getStore } from './api.js';
 import { showToast } from './ui/toast.js';
 import { openDialog, confirmDialog } from './ui/dialog.js';
+import { showLockScreen, isLockShown, IdleWatcher } from './lock.js';
 
 const viewRoot = document.getElementById('view-root');
 
@@ -85,6 +86,9 @@ function buildCtx() {
     getData: () => state.data,
     // iPhone版のOneDrive自動同期（未接続・PC版では null）
     get autosync() { return state.autosync || null; },
+    // 画面ロック: 設定を変えたら呼ぶ（自動ロックの時間を反映）／今すぐロック
+    lockConfigChanged: () => setupLock(),
+    lockNow: () => lockNow(),
     refresh: async () => {
       await refreshData();
       return state.data;
@@ -332,6 +336,52 @@ async function unlockLoop(store) {
   viewRoot.innerHTML = '';
 }
 
+// ---------------- 画面ロック（DESIGN.md §15） ----------------
+// PC: パスワード（サーバーで確認。ロック中はサーバーがデータを出さない）。iPhone: 合言葉（画面だけ隠し、同期は続ける）。
+let idleWatcher = null;
+
+async function lockNow({ serverAlreadyLocked = false, rerender = serverAlreadyLocked } = {}) {
+  if (isLockShown()) return;
+  const store = state.store;
+  if (store.lockStatus) {
+    if (!serverAlreadyLocked) { try { await store.lockScreen(); } catch (e) { /* 既にロック中 */ } }
+    await showLockScreen({
+      label: 'パスワード',
+      verify: async (pw) => {
+        try { await store.unlockScreen(pw); return true; } catch (e) { return e.message; }
+      }
+    });
+    if (rerender) render({ force: true }); // 読み込めなかった画面を読み直す
+  } else {
+    await showLockScreen({
+      label: '合言葉',
+      verify: async (pw) => ((await store.verifyPassphrase(pw)) ? true : '合言葉が違います')
+    });
+  }
+  if (idleWatcher) idleWatcher.reset();
+}
+
+/** 自動ロックの準備（起動時と、設定を変えたとき） */
+async function setupLock() {
+  const store = state.store;
+  let minutes = 0;
+  if (store.lockStatus) {
+    try {
+      const st = await store.lockStatus();
+      minutes = st.enabled ? st.autoLockMinutes : 0;
+    } catch (e) { return; }
+  } else if (store.verifyPassphrase && (await store.hasPassphrase())) {
+    minutes = store.getAutoLockMinutes();
+  }
+  if (idleWatcher) { idleWatcher.setMinutes(minutes); return; }
+  idleWatcher = new IdleWatcher({
+    minutes,
+    onIdle: () => lockNow(),
+    // PC: 操作があったことをサーバーに伝える（サーバー側の自動ロックまでの時間を延ばす）
+    onActivity: () => { if (store.pingLock && idleWatcher && idleWatcher.minutes) store.pingLock().catch(() => {}); }
+  });
+}
+
 /**
  * iPhone版のOneDrive自動同期を始める（DESIGN.md §14）。Microsoftのログイン画面から戻ったところなら、先にログインを仕上げる。
  * 同期するのは: 開いたとき・保存の数秒後・前面に戻ったとき・5分ごと。
@@ -377,6 +427,18 @@ async function bootstrap() {
   if (typeof state.store.isLocked === 'function' && state.store.isLocked()) {
     await unlockLoop(state.store);
   }
+  // PC版: 画面ロックが設定されていて未解除なら、先にパスワードを聞く
+  if (state.store.lockStatus) {
+    try {
+      const st = await state.store.lockStatus();
+      if (st.enabled && !st.unlocked) {
+        viewRoot.innerHTML = '';
+        await lockNow({ serverAlreadyLocked: true, rerender: false });
+      }
+    } catch (e) { /* 古いサーバー等: ロックなしとして続ける */ }
+    window.addEventListener('lm-locked', () => { if (!isLockShown()) lockNow({ serverAlreadyLocked: true }); });
+  }
+  await setupLock();
 
   await refreshData();
 

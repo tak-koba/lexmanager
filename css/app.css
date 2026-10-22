@@ -257,6 +257,13 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .todo-group-editing { border-color: var(--warn); }
 /* 詳細画面の一番下の削除ボタン（誤操作を避けるため上から離す） */
 .danger-zone { display: flex; justify-content: flex-end; margin: 8px 0 24px; padding-top: 12px; border-top: 1px dashed var(--border); }
+/* 画面ロック: 背景を不透明にして下の画面（データ）を隠す */
+.lock-dialog { width: min(380px, calc(100vw - 32px)); }
+.lm-dialog.lock-dialog::backdrop { background: #f4f5f7; } /* ::backdrop には色の変数が届かないブラウザがあるため直接指定（--bg と同じ色） */
+@media (prefers-color-scheme: dark) { .lm-dialog.lock-dialog::backdrop { background: #14171c; } }
+.lock-form { display: flex; flex-direction: column; gap: 10px; padding: 24px; text-align: center; }
+.lock-form label { text-align: left; display: flex; flex-direction: column; gap: 4px; }
+.lock-icon { font-size: 36px; }
 /* 設定の目次 */
 .settings-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
 .section { scroll-margin-top: calc(var(--header-h) + 12px); }

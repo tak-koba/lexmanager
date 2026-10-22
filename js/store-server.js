@@ -33,6 +33,7 @@ export class ServerStore {
     } catch (e) {
       body = null;
     }
+    if (res.status === 423) window.dispatchEvent(new CustomEvent('lm-locked')); // 画面ロック中（自動ロックの期限切れ等）
     if (!res.ok) {
       const err = new Error((body && body.error) || `HTTPエラー (${res.status})`);
       err.status = res.status;
@@ -44,6 +45,16 @@ export class ServerStore {
 
   async meta() {
     return this._req('./api/meta');
+  }
+
+  // ---- 画面ロック（DESIGN.md §15） ----
+  async lockStatus() { return this._req('./api/lock/status'); }
+  async unlockScreen(password) { return this._postJson('./api/lock/unlock', { password }); }
+  async lockScreen() { return this._postJson('./api/lock/lock', {}); }
+  async pingLock() { return this._postJson('./api/lock/ping', {}); }
+  async configureLock(body) { return this._postJson('./api/lock/config', body); }
+  _postJson(path, obj) {
+    return this._req(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(obj) });
   }
 
   async all() {

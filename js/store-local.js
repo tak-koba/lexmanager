@@ -170,6 +170,30 @@ export class LocalStore {
     }
   }
 
+  /** 合言葉が正しいか（自動ロックの解除用。データは読み込み済みのまま） */
+  async verifyPassphrase(pass) {
+    const envelope = await kvGet(this._db, 'state');
+    if (!envelope || !envelope.enc) return true;
+    try {
+      await decryptJson(await deriveKey(pass, envelope.salt), envelope.enc);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  /** 自動ロックまでの分数（0=しない）。合言葉を設定しているときだけ有効 */
+  getAutoLockMinutes() {
+    const m = this._state && this._state.autoLockMinutes;
+    return typeof m === 'number' ? m : 10;
+  }
+
+  async setAutoLockMinutes(m) {
+    this._requireUnlocked();
+    this._state.autoLockMinutes = Number(m) || 0;
+    await this._persist();
+  }
+
   /** 合言葉を設定・変更する。空文字なら暗号化を解除する。 */
   async setPassphrase(pass) {
     this._requireUnlocked();
