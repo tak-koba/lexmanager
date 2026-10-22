@@ -24,6 +24,60 @@ export function asciiPasswordInput(input, hintEl) {
   return input;
 }
 
+/**
+ * 復旧コードを表示し、控えたことを確かめる（コード全体を貼り付けて照合）。照合できたら true、やめたら false。
+ * まだ有効になっていない（呼び出し側が true を受けてから保存する）ことを画面で明示する。
+ */
+export function showRecoveryCodeDialog(code, { normalize, deviceLabel = 'このiPhone' } = {}) {
+  return new Promise((resolve) => {
+    const dlg = el('dialog', { class: 'lm-dialog recovery-dialog' });
+    dlg.addEventListener('cancel', (e) => e.preventDefault());
+    const done = (v) => { dlg.close(); dlg.remove(); resolve(v); };
+    const body = el('div', { class: 'lm-dialog-body' });
+    const footer = el('div', { class: 'lm-dialog-footer' });
+    dlg.appendChild(el('div', { class: 'lm-dialog-header' }, [el('div', { class: 'lm-dialog-title' }, '復旧コード（まだ有効になっていません）')]));
+    dlg.appendChild(body);
+    dlg.appendChild(footer);
+
+    function step1() {
+      body.replaceChildren(
+        el('p', {}, `パスワードを忘れたときに、${deviceLabel}のデータを消さずに開き直すためのコードです。印刷するか、パスワード管理アプリ（iPhoneの「パスワード」アプリ等）に保存してください。`),
+        el('div', { class: 'recovery-code', 'aria-label': '復旧コード' }, code),
+        el('p', { class: 'text-muted' }, `${deviceLabel}専用のコードです（発行日: ${new Date().toLocaleDateString('ja-JP')}）。この画面を閉じると二度と表示できません。`)
+      );
+      const copyBtn = el('button', { type: 'button', class: 'btn', onClick: async () => {
+        try { await navigator.clipboard.writeText(code); copyBtn.textContent = 'コピーしました'; } catch (e) { copyBtn.textContent = 'コピーできませんでした（手で書き写してください）'; }
+      } }, 'コピー');
+      footer.replaceChildren(
+        el('button', { type: 'button', class: 'btn', onClick: () => done(false) }, 'やめる（何も変更しない）'),
+        copyBtn,
+        el('button', { type: 'button', class: 'btn btn-primary', onClick: step2 }, '控えました → 確認へ')
+      );
+    }
+
+    function step2() {
+      const input = el('input', { type: 'text', class: 'field', autocomplete: 'off', autocapitalize: 'characters', spellcheck: 'false', placeholder: '控えた復旧コードを貼り付け（または入力）' });
+      const err = el('p', { class: 'text-error', 'aria-live': 'polite' });
+      body.replaceChildren(
+        el('p', {}, '控えた復旧コードを、保存先から貼り付けてください（正しく控えられたかの確認です）。'),
+        input, err
+      );
+      footer.replaceChildren(
+        el('button', { type: 'button', class: 'btn', onClick: step1 }, '← コードをもう一度見る'),
+        el('button', { type: 'button', class: 'btn btn-primary', onClick: () => {
+          if (normalize(input.value) === normalize(code)) done(true);
+          else err.textContent = '一致しません。保存したコードを確かめてください。';
+        } }, '一致を確認して有効にする')
+      );
+      input.focus();
+    }
+
+    document.body.appendChild(dlg);
+    dlg.showModal();
+    step1();
+  });
+}
+
 export function isLockShown() {
   return !!current;
 }
@@ -45,14 +99,22 @@ export function showLockScreen({ label = 'パスワード', message = '', verify
     el('label', {}, [label, input]),
     err,
     submit,
-    onForgot ? el('button', { type: 'button', class: 'btn-link lock-forgot', onClick: onForgot }, 'パスワードを忘れた場合') : null
+    // onForgot が true を返したら（復旧コードで開き直せたら）ロック画面を閉じる
+    onForgot ? el('button', { type: 'button', class: 'btn-link lock-forgot', onClick: async () => { if ((await onForgot()) === true) finish(); } }, 'パスワードを忘れた場合') : null
   ]);
+  let finish = () => {};
   const dlg = el('dialog', { class: 'lm-dialog lock-dialog' }, form);
   dlg.addEventListener('cancel', (e) => e.preventDefault()); // Escで閉じない
   document.body.appendChild(dlg);
   dlg.showModal();
   input.focus();
   const promise = new Promise((resolve) => {
+    finish = () => {
+      dlg.close();
+      dlg.remove();
+      current = null;
+      resolve();
+    };
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
       if (!input.value) { err.textContent = `${label}を入力してください`; return; }
@@ -62,10 +124,7 @@ export function showLockScreen({ label = 'パスワード', message = '', verify
       try { r = await verify(input.value); } catch (ex) { r = String(ex.message || ex); }
       submit.disabled = false;
       if (r === true) {
-        dlg.close();
-        dlg.remove();
-        current = null;
-        resolve();
+        finish();
       } else {
         err.textContent = typeof r === 'string' ? r : `${label}が違います`;
         input.select();

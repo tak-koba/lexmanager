@@ -24,6 +24,97 @@ function autoLockSelect(value, onChange) {
   return sel;
 }
 
+/**
+ * iPhone版: パスワード・ロック（DESIGN.md §15）。パスワードを設定すると端末内のデータを暗号化する。
+ * 変更・復旧コードの発行・暗号化の解除には今のパスワードが必要。復旧コードは控えたのを確かめてから有効にする。
+ */
+async function buildLocalPasswordSection(ctx) {
+  const store = ctx.store;
+  const { showRecoveryCodeDialog } = await import('../lock.js');
+  const { normalizeRecoveryCode, PASSWORD_MIN } = await import('../store-local.js');
+  const section = el('section', { class: 'section' });
+  section.appendChild(el('h3', {}, 'パスワード・ロック'));
+  const hint = el('p', { class: 'text-error', 'aria-live': 'polite' });
+  const pw = (ph, auto = 'new-password') => asciiPasswordInput(el('input', { type: 'password', class: 'field', placeholder: ph, autocomplete: auto }), hint);
+  const enabled = await store.hasPassphrase();
+  const reload = () => { ctx.lockConfigChanged(); ctx.navigate('#/settings'); };
+
+  // 復旧コードを控えてもらってから保存する（やめたら何も変わらない）
+  const commitWithCode = async (prepared, doneMsg) => {
+    if (prepared.code) {
+      if (!(await showRecoveryCodeDialog(prepared.code, { normalize: normalizeRecoveryCode }))) {
+        ctx.toast('何も変更していません', 'info');
+        return;
+      }
+    }
+    try {
+      await prepared.commit();
+      ctx.toast(doneMsg, 'success');
+      reload();
+    } catch (e) {
+      ctx.toast('保存に失敗しました（何も変更していません）: ' + e.message, 'error');
+    }
+  };
+  const busy = async (btn, fn) => {
+    btn.disabled = true;
+    hint.textContent = '処理しています…（数秒かかります）';
+    try { await fn(); hint.textContent = ''; } catch (e) { hint.textContent = e.message; } finally { btn.disabled = false; }
+  };
+
+  if (!enabled) {
+    section.appendChild(el('p', {}, '未設定'));
+    const p1 = pw(`新しいパスワード（${PASSWORD_MIN}文字以上）`);
+    const p2 = pw('もう一度入力');
+    section.appendChild(p1);
+    section.appendChild(p2);
+    const btn = el('button', { type: 'button', class: 'btn btn-primary', onClick: () => busy(btn, async () => {
+      if (p1.value !== p2.value) throw new Error('2回の入力が一致しません');
+      await commitWithCode(await store.setupPassword(p1.value), 'パスワードを設定しました（この端末のデータを暗号化しました）');
+    }) }, 'パスワードを設定');
+    section.appendChild(btn);
+    section.appendChild(hint);
+    section.appendChild(el('p', { class: 'text-muted' }, `${PASSWORD_MIN}文字以上で、${PASSWORD_RULE}。設定すると、この端末内のデータが暗号化され、パスワードを忘れたときに使う「復旧コード」が発行されます。一定時間操作がないときの自動ロックも使えるようになります。`));
+    return section;
+  }
+
+  const rcText = store.hasRecovery()
+    ? `復旧コード: 発行済み（${new Date(store.recoveryIssuedAt()).toLocaleDateString('ja-JP')}）`
+    : '復旧コード: 未発行（パスワードを忘れると、この端末のデータを初期化するしかありません。発行をおすすめします）';
+  section.appendChild(el('p', {}, ['🔒 設定済み（この端末のデータは暗号化されています）', el('br'), el('span', { class: store.hasRecovery() ? 'text-muted' : 'text-error' }, rcText)]));
+  const cur = pw('今のパスワード', 'current-password');
+  const p1 = pw(`新しいパスワード（${PASSWORD_MIN}文字以上）`);
+  const p2 = pw('新しいパスワードをもう一度');
+  section.appendChild(cur);
+  section.appendChild(el('div', { class: 'field-row' }, [p1, p2]));
+  const changeBtn = el('button', { type: 'button', class: 'btn', onClick: () => busy(changeBtn, async () => {
+    if (!p1.value) throw new Error('新しいパスワードを入力してください');
+    if (p1.value !== p2.value) throw new Error('2回の入力が一致しません');
+    await commitWithCode(await store.changePassword(cur.value, p1.value), 'パスワードを変更しました');
+  }) }, 'パスワードを変更');
+  const rcBtn = el('button', { type: 'button', class: 'btn', onClick: () => busy(rcBtn, async () => {
+    if (!cur.value) throw new Error('今のパスワードを入力してください');
+    await commitWithCode(await store.issueRecoveryCode(cur.value), '復旧コードを有効にしました（以前のコードは使えなくなりました）');
+  }) }, store.hasRecovery() ? '復旧コードを再発行' : '復旧コードを発行');
+  const offBtn = el('button', { type: 'button', class: 'btn btn-danger', onClick: () => busy(offBtn, async () => {
+    if (!cur.value) throw new Error('今のパスワードを入力してください');
+    if (!(await ctx.confirm('パスワードをやめて、この端末のデータの暗号化を解除します。よろしいですか？'))) return;
+    await store.disableEncryption(cur.value);
+    ctx.toast('暗号化を解除しました', 'success');
+    reload();
+  }) }, '暗号化をやめる');
+  section.appendChild(el('div', { class: 'toolbar' }, [changeBtn, rcBtn, offBtn]));
+  section.appendChild(hint);
+  section.appendChild(el('p', { class: 'text-muted' }, `新しいパスワードは${PASSWORD_MIN}文字以上で、${PASSWORD_RULE}。変更・復旧コードの発行・暗号化の解除には、今のパスワードが必要です。`));
+  // 自動ロック（ロック中も、アプリを開いている間は同期を続ける）
+  section.appendChild(el('label', { class: 'field-row', style: 'margin-top:8px' }, ['操作がないとき自動でロック', autoLockSelect(store.getAutoLockMinutes(), async (m) => {
+    await store.setAutoLockMinutes(m);
+    ctx.lockConfigChanged();
+    ctx.toast('自動ロックの時間を変えました', 'success');
+  })]));
+  section.appendChild(el('div', { class: 'toolbar' }, [el('button', { type: 'button', class: 'btn', onClick: () => ctx.lockNow() }, '今すぐロック')]));
+  return section;
+}
+
 /** PC版: 画面ロック（DESIGN.md §15）。ロック中もバックグラウンドの同期・アドオン連携は動く */
 async function buildServerLockSection(ctx) {
   const store = ctx.store;
@@ -592,37 +683,7 @@ async function renderLocalMode(container, ctx) {
   manualSection.appendChild(manualRow);
   container.appendChild(manualSection);
 
-  const passSection = el('section', { class: 'section' });
-  passSection.appendChild(el('h3', {}, 'パスワード・ロック'));
-  const passHint = el('p', { class: 'text-error', 'aria-live': 'polite' });
-  const passInput = asciiPasswordInput(el('input', { type: 'password', class: 'field', placeholder: '新しいパスワード（6文字以上）', autocomplete: 'new-password' }), passHint);
-  passSection.appendChild(passInput);
-  passSection.appendChild(passHint);
-  passSection.appendChild(el('p', { class: 'text-muted' }, `6文字以上で、${PASSWORD_RULE}。設定すると、この端末内のデータが暗号化されます。`));
-  passSection.appendChild(el('button', { type: 'button', class: 'btn', onClick: async () => {
-    if (!store.setPassphrase) { ctx.toast('この端末では利用できません', 'error'); return; }
-    try {
-      await store.setPassphrase(passInput.value);
-      ctx.toast('設定しました', 'success');
-      passInput.value = '';
-      ctx.lockConfigChanged();
-      ctx.navigate('#/settings');
-    } catch (e) {
-      ctx.toast('設定に失敗しました: ' + e.message, 'error');
-    }
-  } }, '設定'));
-  // 自動ロック（パスワードを設定しているときだけ。ロック中も、アプリを開いている間は同期を続ける）
-  if (store.getAutoLockMinutes && (await store.hasPassphrase())) {
-    passSection.appendChild(el('label', { class: 'field-row', style: 'margin-top:8px' }, ['操作がないとき自動でロック', autoLockSelect(store.getAutoLockMinutes(), async (m) => {
-      await store.setAutoLockMinutes(m);
-      ctx.lockConfigChanged();
-      ctx.toast('自動ロックの時間を変えました', 'success');
-    })]));
-    passSection.appendChild(el('div', { class: 'toolbar' }, [el('button', { type: 'button', class: 'btn', onClick: () => ctx.lockNow() }, '今すぐロック')]));
-  } else {
-    passSection.appendChild(el('p', { class: 'text-muted' }, 'パスワードを設定すると、一定時間操作がないときの自動ロックも使えます。'));
-  }
-  container.appendChild(passSection);
+  container.appendChild(await buildLocalPasswordSection(ctx));
 
   let legacyData = null;
   try {

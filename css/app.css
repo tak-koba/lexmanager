@@ -266,6 +266,8 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .lock-icon { font-size: 36px; }
 .btn-link { background: none; border: 0; padding: 6px; font: inherit; font-size: 13px; color: var(--accent); text-decoration: underline; cursor: pointer; }
 .lock-forgot { align-self: center; }
+/* 復旧コードの表示 */
+.recovery-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 20px; font-weight: 700; letter-spacing: .06em; padding: 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); text-align: center; user-select: all; overflow-wrap: anywhere; }
 /* 設定の目次 */
 .settings-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
 .section { scroll-margin-top: calc(var(--header-h) + 12px); }

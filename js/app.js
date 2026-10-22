@@ -319,12 +319,13 @@ async function unlockLoop(store) {
     '<p class="text-error" aria-live="polite"></p><button class="btn btn-primary" type="submit">開く</button>' +
     '<button class="btn-link lock-forgot" type="button">パスワードを忘れた場合</button>';
   viewRoot.appendChild(box);
-  box.querySelector('.lock-forgot').addEventListener('click', () => forgotIphonePassword(store));
   const input = box.querySelector('input');
   const msg = box.querySelector('.text-error');
   if (store.passwordIsAscii && store.passwordIsAscii()) asciiPasswordInput(input, msg);
   input.focus();
   await new Promise((resolve) => {
+    // 復旧コードで開き直せたら、そのまま開く
+    box.querySelector('.lock-forgot').addEventListener('click', async () => { if ((await forgotIphonePassword(store)) === true) resolve(); });
     box.addEventListener('submit', async (e) => {
       e.preventDefault();
       msg.textContent = '確認中...';
@@ -352,8 +353,87 @@ function forgotPcPassword() {
   openDialog({ title: 'パスワードを忘れた場合', bodyNode: body, actions: [{ label: '閉じる', primary: true }] });
 }
 
-/** iPhone版でパスワードを忘れたとき: この端末のデータを消して初期状態に戻す（PCのデータは残る） */
+/**
+ * iPhone版でパスワードを忘れたとき。復旧コードがあれば、それで開き直す（データは消えない）。
+ * なければ（または選べば）この端末のデータを消して初期化する。開き直せたら true。
+ */
 async function forgotIphonePassword(store) {
+  if (store.hasRecovery && store.hasRecovery()) {
+    const choice = await new Promise((resolve) => {
+      const body = document.createElement('p');
+      body.textContent = '控えておいた「復旧コード」があれば、データを消さずに新しいパスワードを設定できます。';
+      openDialog({
+        title: 'パスワードを忘れた場合',
+        bodyNode: body,
+        actions: [
+          { label: 'この端末を初期化する', danger: true, onClick: () => resolve('reset') },
+          { label: '復旧コードで開き直す', primary: true, onClick: () => resolve('recover') }
+        ],
+        onClose: () => resolve(null)
+      });
+    });
+    if (choice === 'recover') return recoverWithCode(store);
+    if (choice !== 'reset') return false;
+  }
+  return resetIphoneData(store);
+}
+
+/** 復旧コード → 新しいパスワード → 新しい復旧コードを控える → 保存。開き直せたら true */
+async function recoverWithCode(store) {
+  const { asciiPasswordInput, showRecoveryCodeDialog } = await import('./lock.js');
+  const { normalizeRecoveryCode, PASSWORD_MIN } = await import('./store-local.js');
+  let prepared = null;
+  const ok = await new Promise((resolve) => {
+    const form = document.createElement('form');
+    form.className = 'quick-form';
+    form.innerHTML = '<label>復旧コード<input type="text" name="code" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-…"></label>' +
+      `<label>新しいパスワード（${PASSWORD_MIN}文字以上・半角英数字と記号）<input type="password" name="p1" autocomplete="new-password"></label>` +
+      '<label>新しいパスワード（もう一度）<input type="password" name="p2" autocomplete="new-password"></label>' +
+      '<p class="text-error" aria-live="polite"></p>';
+    form.addEventListener('submit', (e) => e.preventDefault());
+    const err = form.querySelector('.text-error');
+    asciiPasswordInput(form.p1, err);
+    asciiPasswordInput(form.p2, err);
+    openDialog({
+      title: '復旧コードで開き直す',
+      bodyNode: form,
+      actions: [
+        { label: 'キャンセル', onClick: () => resolve(false) },
+        { label: '次へ', primary: true, onClick: async () => {
+          if (form.p1.value !== form.p2.value) { err.textContent = '2回の入力が一致しません'; return 'keep-open'; }
+          err.textContent = '確認しています…（数秒かかります）';
+          try {
+            const rec = await store.beginRecovery(form.code.value);
+            prepared = rec.finish(form.p1.value);
+          } catch (e) {
+            err.textContent = e.message;
+            return 'keep-open';
+          }
+          resolve(true);
+          return undefined;
+        } }
+      ],
+      onClose: () => resolve(false)
+    });
+  });
+  if (!ok || !prepared) return false;
+  // 新しい復旧コードを控えてもらってから保存する（控える前にやめたら何も変わらない）
+  if (!(await showRecoveryCodeDialog(prepared.code, { normalize: normalizeRecoveryCode }))) {
+    showToast('何も変更していません（以前の復旧コードは引き続き使えます）', 'info');
+    return false;
+  }
+  try {
+    await prepared.commit();
+  } catch (e) {
+    showToast('保存に失敗しました（何も変更していません）: ' + e.message, 'error');
+    return false;
+  }
+  showToast('新しいパスワードを設定しました', 'success');
+  return true;
+}
+
+/** この端末のデータを消して初期状態に戻す（PCのデータは残る） */
+async function resetIphoneData(store) {
   const ok1 = await confirmDialog('パスワードは元に戻せないため、この端末のLexManagerのデータを消して初期状態に戻します。\n\n・PC（事務所PC）のデータは消えません。\n・初期化のあと、設定でOneDriveに接続し直すと、PCの最新データが読み込まれます（アプリケーションIDの入力からやり直しになります）。\n・この端末からPCにまだ送っていない変更は失われます。\n\n初期化しますか？', { okLabel: '初期化へ進む', danger: true });
   if (!ok1) return;
   const ok2 = await confirmDialog('本当に、この端末のLexManagerのデータを消しますか？（元に戻せません）', { okLabel: '消して初期化する', danger: true });

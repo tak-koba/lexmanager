@@ -69,15 +69,98 @@ async function deriveKey(passphrase, saltB64) {
   );
 }
 
-async function encryptJson(key, obj) {
+async function encryptJson(key, obj, ad) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(obj)));
+  const params = ad ? { name: 'AES-GCM', iv, additionalData: ad } : { name: 'AES-GCM', iv };
+  const data = await crypto.subtle.encrypt(params, key, new TextEncoder().encode(JSON.stringify(obj)));
   return { iv: toB64(iv), data: toB64(data) };
 }
 
-async function decryptJson(key, enc) {
-  const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(enc.iv) }, key, fromB64(enc.data));
+async function decryptJson(key, enc, ad) {
+  const iv = fromB64(enc.iv);
+  const params = ad ? { name: 'AES-GCM', iv, additionalData: ad } : { name: 'AES-GCM', iv };
+  const plain = await crypto.subtle.decrypt(params, key, fromB64(enc.data));
   return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// ---------- 形式v2: データ鍵(DK)を「パスワード用」「復旧コード用」の2通りに包む（DESIGN.md §15） ----------
+// envelope v2 = { v:2, gen, ascii, kdf:{pw:{salt,iter}, rc:{salt,iter}}, wrapPw, wrapRc, rcIssuedAt, enc }
+// state は DK で暗号化。DK の生バイトは包む・開くときだけ一時的に使い、普段は取り出せない鍵（extractable=false）で持つ。
+
+const KDF_ITER_PW = 600000;  // パスワード（総当たり対策。Codexの推奨値を出発点）
+const KDF_ITER_RC = 100000;  // 復旧コード（128ビットの乱数なので少なくてよい）
+const KDF_ITER_MAX = 2000000;
+export const PASSWORD_MIN = 8;
+const PASSWORD_RE = /^[\x21-\x7E]+$/;
+const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+
+function randBytes(n) {
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+
+/** 新しいパスワードの確認（8文字以上・半角の英数字と記号のみ） */
+export function checkNewPassword(pw) {
+  if (!pw || pw.length < PASSWORD_MIN) throw new Error(`パスワードは${PASSWORD_MIN}文字以上にしてください`);
+  if (!PASSWORD_RE.test(pw)) throw new Error('パスワードは半角の英数字と記号だけ使えます（空白・全角は使えません）');
+}
+
+/** 復旧コード: 128ビットの乱数を Crockford Base32 で 26文字（4文字ずつ区切り） */
+function newRecoveryCode() {
+  const bytes = randBytes(16);
+  let out = '';
+  let value = 0;
+  let bits = 0;
+  for (const b of bytes) {
+    value = (value << 8) | b;
+    bits += 8;
+    while (bits >= 5) {
+      out += CROCKFORD[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+    value &= (1 << bits) - 1;
+  }
+  if (bits > 0) out += CROCKFORD[(value << (5 - bits)) & 31];
+  return out.match(/.{1,4}/g).join('-');
+}
+
+/** 入力された復旧コードをそろえる（大文字化、区切り・空白を除く、O→0、I/L→1） */
+export function normalizeRecoveryCode(s) {
+  return String(s || '').toUpperCase().replace(/[\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+}
+
+async function kekFrom(secret, kdf) {
+  if (!kdf || !kdf.salt || !(kdf.iter > 0) || kdf.iter > KDF_ITER_MAX) throw new Error('保存データの形式が不正です');
+  const material = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: fromB64(kdf.salt), iterations: kdf.iter, hash: 'SHA-256' },
+    material, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']
+  );
+}
+
+/** 暗号文の用途・世代を結び付ける（取り違え・差し替えの検出） */
+function aad(purpose, gen) {
+  return new TextEncoder().encode(`lexmanager4:v2:${purpose}:${gen}`);
+}
+
+async function sealBytes(key, bytes, ad) {
+  const iv = randBytes(12);
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: ad }, key, bytes);
+  return { iv: toB64(iv), data: toB64(data) };
+}
+
+async function openBytes(key, enc, ad) {
+  return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64(enc.iv), additionalData: ad }, key, fromB64(enc.data)));
+}
+
+function importDk(raw) {
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+function sameBytes(a, b) {
+  if (a.length !== b.length) return false;
+  let d = 0;
+  for (let i = 0; i < a.length; i++) d |= a[i] ^ b[i];
+  return d === 0;
 }
 
 // ---------- 補助 ----------
@@ -127,11 +210,14 @@ export class LocalStore {
       trash: false, conflicts: false, mobileImport: false, local: true
     };
     this._db = null;
-    this._key = null;       // パスワードから作った鍵（ロック解除後のみ）
-    this._salt = null;      // パスワードが設定されていれば salt
+    this._key = null;       // 形式v1: パスワードから直接作った鍵（ロック解除後のみ）
+    this._dk = null;        // 形式v2: データ鍵（取り出せない鍵。ロック解除後のみ）
+    this._env = null;       // 形式v2: 鍵の包み等（暗号文を除く）。保存のたびにそのまま書く
+    this._salt = null;      // パスワードが設定されていれば salt（設定の有無の判定に使う）
     this._asciiPw = false;  // 半角英数字・記号だけのパスワードか（2026.10.22.14 以降に設定したもの）
     this._state = null;     // ロック中は null
     this._changeCbs = [];
+    this._chain = Promise.resolve(); // 保存・鍵の作り替えを1つずつ順に行う（途中で混ざらないように）
   }
 
   // ---------- 起動・ロック ----------
@@ -139,8 +225,15 @@ export class LocalStore {
   async init() {
     this._db = await openDb();
     const envelope = await kvGet(this._db, 'state');
-    if (envelope && envelope.enc) {
-      this._salt = envelope.salt;
+    if (envelope && envelope.v === 2) {
+      const { enc, ...env } = envelope;
+      this._env = env;
+      this._salt = (env.kdf && env.kdf.pw && env.kdf.pw.salt) || 'v2';
+      this._asciiPw = !!env.ascii;
+      this._state = null; // パスワード入力待ち
+    } else if (envelope && (envelope.enc || envelope.v)) {
+      // 形式v1（または未知の新しい形式）。未知の形式を空データとして扱わない
+      this._salt = envelope.salt || 'unknown';
       this._asciiPw = !!envelope.ascii;
       this._state = null; // パスワード入力待ち
     } else {
@@ -160,8 +253,19 @@ export class LocalStore {
   /** パスワードでロック解除。成功で true。 */
   async unlock(pass) {
     const envelope = await kvGet(this._db, 'state');
-    if (!envelope || !envelope.enc) return true;
+    if (!envelope || !(envelope.enc || envelope.v)) return true;
     try {
+      if (envelope.v === 2) {
+        const { enc, ...env } = envelope;
+        const dk = await this._openDk(env, 'pw', pass);
+        const state = await decryptJson(dk, enc, aad('state', env.gen));
+        this._dk = dk;
+        this._env = env;
+        this._key = null;
+        this._state = Object.assign(emptyState(), state);
+        return true;
+      }
+      if (envelope.v) return false; // 未知の新しい形式（新しい版のアプリで開いてください）
       const key = await deriveKey(pass, envelope.salt);
       const state = await decryptJson(key, envelope.enc);
       this._key = key;
@@ -170,6 +274,162 @@ export class LocalStore {
     } catch (e) {
       return false;
     }
+  }
+
+  /** v2: パスワード（purpose='pw'）または復旧コード（'rc'）でデータ鍵を開く。生バイトはすぐ消す */
+  async _openDk(env, purpose, secret) {
+    const raw = await this._openDkRaw(env, purpose, secret);
+    try { return await importDk(raw); } finally { raw.fill(0); }
+  }
+
+  async _openDkRaw(env, purpose, secret) {
+    const wrap = purpose === 'pw' ? env.wrapPw : env.wrapRc;
+    const kdf = env.kdf && (purpose === 'pw' ? env.kdf.pw : env.kdf.rc);
+    if (!wrap || !kdf) throw new Error('復旧コードが発行されていません');
+    const value = purpose === 'rc' ? normalizeRecoveryCode(secret) : secret;
+    return openBytes(await kekFrom(value, kdf), wrap, aad(purpose, env.gen));
+  }
+
+  /** 今のパスワードが正しいか（v1・v2とも）。正しくなければ例外 */
+  async _checkCurrent(pass) {
+    const envelope = await kvGet(this._db, 'state');
+    if (!envelope || !(envelope.enc || envelope.v)) return;
+    try {
+      if (envelope.v === 2) {
+        const raw = await this._openDkRaw(envelope, 'pw', pass);
+        raw.fill(0);
+        return;
+      }
+      await decryptJson(await deriveKey(pass, envelope.salt), envelope.enc);
+    } catch (e) {
+      throw new Error('今のパスワードが違います');
+    }
+  }
+
+  // ---------- パスワード・復旧コード（DESIGN.md §15） ----------
+  // 鍵を作り替える処理は「新しい包みを作る → 新しい鍵で開けるか確かめる → 1回で保存 → 保存完了後に切り替え」の順。
+  // 復旧コードを伴うものは、利用者がコードを控えた（貼り付けて照合した）あとで commit() する。それまで何も変わらない。
+
+  hasRecovery() {
+    return !!(this._env && this._env.wrapRc);
+  }
+
+  recoveryIssuedAt() {
+    return (this._env && this._env.rcIssuedAt) || '';
+  }
+
+  /**
+   * 新しいデータ鍵・パスワード・復旧コードで作り直す準備。戻り値 {code, commit()}。
+   * stateFn: 保存する内容（commit 時点の値を使う）。password: 新しい（または今の）パスワード。
+   */
+  _prepareNewDk(password, stateFn, onCommitted) {
+    const code = newRecoveryCode();
+    const commit = () => this._serial(async () => {
+      const gen = toB64(randBytes(9));
+      const raw = randBytes(32);
+      try {
+        const env = {
+          v: 2, gen, ascii: true, rcIssuedAt: nowIso(),
+          kdf: { pw: { salt: toB64(randBytes(16)), iter: KDF_ITER_PW }, rc: { salt: toB64(randBytes(16)), iter: KDF_ITER_RC } }
+        };
+        env.wrapPw = await sealBytes(await kekFrom(password, env.kdf.pw), raw, aad('pw', gen));
+        env.wrapRc = await sealBytes(await kekFrom(normalizeRecoveryCode(code), env.kdf.rc), raw, aad('rc', gen));
+        // 新しい包みから同じ鍵が取り出せるか確かめる
+        const back1 = await this._openDkRaw(env, 'pw', password);
+        const back2 = await this._openDkRaw(env, 'rc', code);
+        const ok = sameBytes(back1, raw) && sameBytes(back2, raw);
+        back1.fill(0); back2.fill(0);
+        if (!ok) throw new Error('鍵の確認に失敗しました（何も変更していません）');
+        const dk = await importDk(raw);
+        const state = stateFn();
+        const enc = await encryptJson(dk, state, aad('state', gen));
+        await decryptJson(dk, enc, aad('state', gen)); // 暗号文が開けることを確かめてから保存
+        await kvPut(this._db, 'state', { ...env, enc });
+        // 保存が完了してから切り替える
+        this._dk = dk; this._env = env; this._key = null; this._salt = env.kdf.pw.salt; this._asciiPw = true;
+        this._state = state;
+        if (onCommitted) onCommitted();
+      } finally {
+        raw.fill(0);
+      }
+    });
+    return { code, commit };
+  }
+
+  /** パスワードを初めて設定する（暗号化していない端末）。{code, commit()} を返す */
+  async setupPassword(newPw) {
+    this._requireUnlocked();
+    if (await this.hasPassphrase()) throw new Error('パスワードは設定済みです');
+    checkNewPassword(newPw);
+    return this._prepareNewDk(newPw, () => this._state);
+  }
+
+  /**
+   * パスワードを変える。v2 はデータ鍵・復旧コードをそのままに包みだけ作り替える（{code:null, commit()}）。
+   * 古い形式（v1）は新しい形式へ移すため、復旧コードも発行する（{code, commit()}）。
+   */
+  async changePassword(currentPw, newPw) {
+    this._requireUnlocked();
+    checkNewPassword(newPw);
+    await this._checkCurrent(currentPw);
+    if (!this._env) return this._prepareNewDk(newPw, () => this._state);
+    const commit = () => this._serial(async () => {
+      const raw = await this._openDkRaw(this._env, 'pw', currentPw);
+      try {
+        const env = { ...this._env, ascii: true, kdf: { ...this._env.kdf, pw: { salt: toB64(randBytes(16)), iter: KDF_ITER_PW } } };
+        env.wrapPw = await sealBytes(await kekFrom(newPw, env.kdf.pw), raw, aad('pw', env.gen));
+        const back = await this._openDkRaw(env, 'pw', newPw);
+        const ok = sameBytes(back, raw);
+        back.fill(0);
+        if (!ok) throw new Error('鍵の確認に失敗しました（何も変更していません）');
+        const enc = await encryptJson(this._dk, this._state, aad('state', env.gen));
+        await kvPut(this._db, 'state', { ...env, enc });
+        this._env = env; this._salt = env.kdf.pw.salt; this._asciiPw = true;
+      } finally {
+        raw.fill(0);
+      }
+    });
+    return { code: null, commit };
+  }
+
+  /** 復旧コードを発行（再発行）する。データ鍵ごと作り替え、古い復旧コードは使えなくなる。{code, commit()} */
+  async issueRecoveryCode(currentPw) {
+    this._requireUnlocked();
+    await this._checkCurrent(currentPw);
+    return this._prepareNewDk(currentPw, () => this._state);
+  }
+
+  /** 暗号化をやめる（今のパスワードが必要） */
+  async disableEncryption(currentPw) {
+    this._requireUnlocked();
+    await this._checkCurrent(currentPw);
+    await this._serial(async () => {
+      await kvPut(this._db, 'state', { plain: this._state });
+      this._dk = null; this._env = null; this._key = null; this._salt = null; this._asciiPw = false;
+    });
+  }
+
+  /**
+   * パスワードを忘れたとき: 復旧コードでデータを開く。成功したら finish(新しいパスワード) で
+   * 新しいデータ鍵・パスワード・復旧コードを準備する（{code, commit()}。commit するとロック解除状態になる）。
+   */
+  async beginRecovery(code) {
+    const envelope = await kvGet(this._db, 'state');
+    if (!envelope || envelope.v !== 2 || !envelope.wrapRc) throw new Error('この端末では復旧コードが発行されていません');
+    let state;
+    try {
+      const { enc, ...env } = envelope;
+      const dk = await this._openDk(env, 'rc', code);
+      state = Object.assign(emptyState(), await decryptJson(dk, enc, aad('state', env.gen)));
+    } catch (e) {
+      throw new Error('復旧コードが違います');
+    }
+    return {
+      finish: (newPw) => {
+        checkNewPassword(newPw);
+        return this._prepareNewDk(newPw, () => state);
+      }
+    };
   }
 
   /**
@@ -195,10 +455,8 @@ export class LocalStore {
 
   /** パスワードが正しいか（自動ロックの解除用。データは読み込み済みのまま） */
   async verifyPassphrase(pass) {
-    const envelope = await kvGet(this._db, 'state');
-    if (!envelope || !envelope.enc) return true;
     try {
-      await decryptJson(await deriveKey(pass, envelope.salt), envelope.enc);
+      await this._checkCurrent(pass);
       return true;
     } catch (e) {
       return false;
@@ -217,28 +475,26 @@ export class LocalStore {
     await this._persist();
   }
 
-  /** パスワードを設定・変更する。空文字なら暗号化を解除する。 */
-  async setPassphrase(pass) {
-    this._requireUnlocked();
-    if (!pass) {
-      this._key = null;
-      this._salt = null;
-    } else {
-      if (pass.length < 6) throw new Error('パスワードは6文字以上にしてください');
-      if (!/^[\x21-\x7E]+$/.test(pass)) throw new Error('パスワードは半角の英数字と記号だけ使えます（空白・全角は使えません）');
-      this._asciiPw = true;
-      this._salt = toB64(crypto.getRandomValues(new Uint8Array(16)));
-      this._key = await deriveKey(pass, this._salt);
-    }
-    await this._persist();
+  /** 保存・鍵の作り替えを1つずつ順に実行する（前の処理が失敗しても次は動く） */
+  _serial(fn) {
+    const p = this._chain.then(fn, fn);
+    this._chain = p.catch(() => {});
+    return p;
   }
 
   async _persist() {
-    if (this._key) {
-      await kvPut(this._db, 'state', { salt: this._salt, ascii: this._asciiPw, enc: await encryptJson(this._key, this._state) });
-    } else {
-      await kvPut(this._db, 'state', { plain: this._state });
-    }
+    return this._serial(async () => {
+      if (!this._state) throw new Error('パスワードを入力してロックを解除してください');
+      if (this._dk && this._env) {
+        await kvPut(this._db, 'state', { ...this._env, enc: await encryptJson(this._dk, this._state, aad('state', this._env.gen)) });
+      } else if (this._key) {
+        await kvPut(this._db, 'state', { salt: this._salt, ascii: this._asciiPw, enc: await encryptJson(this._key, this._state) });
+      } else if (this._salt) {
+        throw new Error('保存できません（暗号化の鍵がありません）'); // 暗号化している端末に平文で書かない
+      } else {
+        await kvPut(this._db, 'state', { plain: this._state });
+      }
+    });
   }
 
   _requireUnlocked() {
