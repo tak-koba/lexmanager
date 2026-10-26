@@ -281,6 +281,11 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .lock-forgot { align-self: center; min-height: 44px; min-width: 44px; padding: 10px 14px; } /* 指で押しやすい大きさ（44px以上） */
 /* 復旧コードの表示 */
 .recovery-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 20px; font-weight: 700; letter-spacing: .06em; padding: 14px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-2); text-align: center; user-select: all; overflow-wrap: anywhere; }
+/* コンフリクトチェックの結果 */
+.conflict-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.conflict-item { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 10px; display: flex; flex-direction: column; gap: 2px; }
+.conflict-item.conflict-strong { border-color: var(--danger); background: var(--danger-soft); }
+.conflict-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 /* 設定の目次 */
 .settings-toc { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
 .section { scroll-margin-top: calc(var(--header-h) + 12px); }
@@ -327,7 +332,10 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .todo-sub, .todo-mail { font-size: 12.5px; overflow-wrap: anywhere; }
 .todo-notes { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; }
 .todo-empty { font-size: 12.5px; }
-.todo-cal { font-size: 13px; }
+/* Googleカレンダーに登録するToDoの目印（一目で分かるよう色付き） */
+.cal-badge { display: inline-flex; align-items: center; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; vertical-align: middle; background: var(--accent-soft); color: var(--accent); border: 1px solid var(--accent); }
+.cal-badge-warn { background: var(--warn-soft); color: var(--warn); border-color: var(--warn); }
+.todo-item.todo-done .cal-badge { opacity: .6; }
 .todo-deadline-inputs { display: flex; gap: 6px; }
 .todo-deadline-inputs > input { flex: 1 1 auto; min-width: 0; }
 

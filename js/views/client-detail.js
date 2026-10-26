@@ -7,8 +7,9 @@ import {
   displayName, kanaName, sortByKana, PHONE_TYPES, formatDate,
   telLink, mailLink, copyButton, addressDisplayRow, zipLookupButton, addressSearchButton,
   kanaAssistPair, sectionHeader, saveRecord, deleteRecordButton, quickCreateCaseDialog, runAiExtractFlow,
-  clientTypeChip, editBar, takeNewDraft
+  clientTypeChip, editBar, takeNewDraft, checkClientBeforeSave, conflictResultList
 } from './_shared.js';
+import { findConflicts, clientParty, summarizeConflicts } from '../util/conflict.js';
 import { defaultClient } from '../model.js';
 import { todayIso } from '../ui/dates.js';
 import { confirmDialog } from '../ui/dialog.js';
@@ -112,8 +113,11 @@ export async function render(container, params, ctx) {
   async function saveAll() {
     const edited = Object.assign({}, ...collectors.map((f) => f()));
     if (isNew) {
+      // 登録の前にコンフリクトチェック（該当があれば結果を見せて、続けるか聞く）
+      const checked = await checkClientBeforeSave(ctx, { ...record, ...edited });
+      if (!checked) return;
       try {
-        const created = await ctx.store.create('clients', { ...record, ...edited });
+        const created = await ctx.store.create('clients', { ...record, ...edited, ...checked });
         ctx.toast('顧客を登録しました', 'success');
         editMode = false; setDirty(false);
         ctx.navigate(`#/clients/${created.id}`);
@@ -146,7 +150,30 @@ export async function render(container, params, ctx) {
         record.isArchived ? el('span', { class: 'chip' }, '取引終了') : null,
         ...(record.tags || []).map((t) => el('span', { class: 'chip' }, t))
       ]));
+      // コンフリクトチェック（利益相反の確認）の記録と再チェック
+      const cc = record.conflictCheck;
+      section.appendChild(el('div', { class: 'field-row conflict-status', style: 'margin-top:8px' }, [
+        el('span', { class: cc && cc.count ? 'text-error' : 'text-muted' }, cc
+          ? `コンフリクトチェック: ${new Date(cc.at).toLocaleDateString('ja-JP')} ${cc.result}${cc.acknowledged ? '（確認のうえ登録）' : ''}`
+          : 'コンフリクトチェック: 記録なし'),
+        el('button', { type: 'button', class: 'btn btn-small', onClick: recheckConflicts }, '再チェック')
+      ]));
+    }
 
+    async function recheckConflicts() {
+      const data = await ctx.store.all();
+      const hits = findConflicts(clientParty(record), data, { excludeClientId: record.id });
+      ctx.openDialog({
+        title: `コンフリクトチェック: ${displayName(record) || '(名称未設定)'}`,
+        bodyNode: conflictResultList(hits),
+        actions: [
+          { label: '閉じる' },
+          { label: 'この結果を記録する', primary: true, onClick: async () => {
+            const saved = await saveRecord(ctx, 'clients', record, { ...record, conflictCheck: { at: new Date().toISOString(), result: summarizeConflicts(hits), count: hits.length, acknowledged: hits.length > 0 } });
+            if (saved) { record = saved; renderAll(); ctx.toast('チェック結果を記録しました', 'success'); }
+          } }
+        ]
+      });
     }
 
     function edit() {

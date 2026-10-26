@@ -1,6 +1,6 @@
 // LexManager 4 - 全体検索（#/search?q=...）
 import { el, clear } from '../ui/dom.js';
-import { displayName, kanaName, renderDeadlineBadge, opponentName, todoTaskText } from './_shared.js';
+import { displayName, kanaName, renderDeadlineBadge, opponentName, todoTaskText, calendarBadge } from './_shared.js';
 import { clientEmails } from '../model.js';
 
 export async function render(container, params, ctx) {
@@ -109,6 +109,7 @@ export async function render(container, params, ctx) {
           el('div', { class: 'row-main' }, [
             t.done ? el('span', { class: 'chip' }, '完了') : renderDeadlineBadge(t.deadline),
             el('span', {}, todoTaskText(t)),
+            calendarBadge(t),
             (t.requester || t.caseLabel) ? el('span', { class: 'text-muted' }, [t.caseLabel, t.requester].filter(Boolean).join(' ／ ')) : null
           ])
         ]));

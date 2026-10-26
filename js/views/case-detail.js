@@ -9,7 +9,7 @@ import {
   displayName, opponentName, sortByKana, formatDate, formatDateTime, newId,
   renderDeadlineBadge, telLink, copyButton, sectionHeader, saveRecord, deleteRecordButton, dateTimeInputs, defaultTodo, runAiExtractFlow,
   todoViewRow, todoGroupEditor, commitTodoPlan,
-  editBar, takeNewDraft
+  editBar, takeNewDraft, checkOpponentsBeforeSave
 } from './_shared.js';
 import { defaultCase } from '../model.js';
 import { todayIso } from '../ui/dates.js';
@@ -112,6 +112,8 @@ export async function render(container, params, ctx) {
     const plan = todoEditor ? todoEditor.collect() : null;
     if (plan && plan.errors.length) { ctx.toast(plan.errors[0], 'error'); return; }
     const edited = Object.assign({}, ...collectors.map((f) => f()));
+    // 相手方を加えた・変えたときは、既存の顧客（依頼者側）や他の案件と照合する（コンフリクトチェック）
+    if (edited.opponents && !(await checkOpponentsBeforeSave(ctx, record.id || '', edited.opponents, record.opponents || []))) return;
     if (isNew) {
       let created;
       try {

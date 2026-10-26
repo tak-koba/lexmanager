@@ -2,7 +2,7 @@
 import { el, clear } from '../ui/dom.js';
 import {
   renderDeadlineBadge, displayName, sortByKana, kanaName,
-  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar, todoTaskText
+  quickCreateClientDialog, quickCreateCaseDialog, quickCreateTodoDialog, openCalendar, todoTaskText, calendarBadge
 } from './_shared.js';
 import { formatDateTime } from '../ui/dates.js';
 
@@ -296,7 +296,7 @@ function buildTodoSection(todos, ctx) {
     });
     const row = el('li', { class: 'list-row', onClick: () => ctx.navigate('#/todos') }, [
       cb,
-      el('div', { class: 'row-main' }, [renderDeadlineBadge(t.deadline), el('span', {}, todoTaskText(t))])
+      el('div', { class: 'row-main' }, [renderDeadlineBadge(t.deadline), el('span', {}, todoTaskText(t)), calendarBadge(t)])
     ]);
     list.appendChild(row);
   }
