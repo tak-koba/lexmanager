@@ -1,6 +1,7 @@
 // LexManager 4 - 全体検索（#/search?q=...）
 import { el, clear } from '../ui/dom.js';
-import { displayName, kanaName, renderDeadlineBadge, opponentName, todoTaskText, calendarBadge } from './_shared.js';
+import { displayName, kanaName, renderDeadlineBadge, opponentName, todoTaskText, calendarBadge, conflictResultList } from './_shared.js';
+import { findConflicts } from '../util/conflict.js';
 import { clientEmails } from '../model.js';
 
 export async function render(container, params, ctx) {
@@ -8,9 +9,14 @@ export async function render(container, params, ctx) {
   container.appendChild(el('h1', { class: 'view-title' }, '検索'));
 
   const initialQ = (params && params.q) || parseQFromHash();
+  const initialCc = (params && params.cc === '1') || parseQFromHash('cc') === '1';
 
   const input = el('input', { type: 'search', class: 'field search-input', placeholder: '氏名・会社名・電話・メール・住所・案件名・相手方・裁判所・メモ本文で検索', value: initialQ || '', 'aria-label': '検索する言葉' });
   container.appendChild(input);
+  // オプション: コンフリクトチェック（利益相反の確認。DESIGN.md §17）
+  const ccToggle = el('input', { type: 'checkbox', checked: initialCc });
+  container.appendChild(el('label', { class: 'field-row search-option' }, [ccToggle,
+    el('span', {}, ['コンフリクトチェック（利益相反の確認）', el('span', { class: 'text-muted' }, ' … 入れた名前・電話・メールを、既存の顧客・各案件の相手方・相手方代理人と照合します。全角/半角・カタカナ/ひらがな・「株式会社」等の違いは無視して比べます。複数は「、」区切り。')])]));
 
   const resultsBox = el('div', { class: 'list-box' });
   container.appendChild(resultsBox);
@@ -24,7 +30,7 @@ export async function render(container, params, ctx) {
   }
 
   function updateHash(q) {
-    const newHash = `#/search?q=${encodeURIComponent(q)}`;
+    const newHash = `#/search?q=${encodeURIComponent(q)}${ccToggle.checked ? '&cc=1' : ''}`;
     if (location.hash !== newHash) {
       history.replaceState(null, '', newHash);
     }
@@ -35,7 +41,20 @@ export async function render(container, params, ctx) {
     updateHash(q);
     clear(resultsBox);
     if (!q) {
-      resultsBox.appendChild(el('p', { class: 'text-muted' }, '検索語を入力してください'));
+      resultsBox.appendChild(el('p', { class: 'text-muted' }, ccToggle.checked ? '照合する名前・電話番号・メールアドレスを入力してください' : '検索語を入力してください'));
+      return;
+    }
+    if (ccToggle.checked) {
+      // 「、」「,」区切りで複数。@ を含むものはメール、数字が10桁以上のものは電話、それ以外は名前として照合
+      const parts = q.split(/[,、，\n]/).map((s) => s.trim()).filter(Boolean);
+      const query = { names: [], phones: [], emails: [] };
+      for (const p of parts) {
+        if (p.includes('@')) query.emails.push(p);
+        else if (p.replace(/[^0-9０-９]/g, '').length >= 10) query.phones.push(p);
+        else query.names.push(p);
+      }
+      resultsBox.appendChild(el('h3', {}, 'コンフリクトチェックの結果'));
+      resultsBox.appendChild(conflictResultList(findConflicts(query, all)));
       return;
     }
     const ql = q.toLowerCase();
@@ -119,15 +138,16 @@ export async function render(container, params, ctx) {
   }
 
   input.addEventListener('input', runSearch);
+  ccToggle.addEventListener('change', runSearch);
   runSearch();
 
   setTimeout(() => input.focus(), 0);
 }
 
-function parseQFromHash() {
+function parseQFromHash(key = 'q') {
   const hash = location.hash || '';
   const qIndex = hash.indexOf('?');
   if (qIndex === -1) return '';
   const params = new URLSearchParams(hash.slice(qIndex + 1));
-  return params.get('q') || '';
+  return params.get(key) || '';
 }

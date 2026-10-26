@@ -4,14 +4,12 @@ import { el, clear } from '../ui/dom.js';
 import { toWareki, toSeireki, calcAge } from '../util/gengo.js';
 import { currentGrade, educationTimeline, SCHOOL_STAGES, countDays, calcInterest } from '../util/calc.js';
 import { formatSlots, parseSlots } from '../util/slots.js';
-import { todayIso, conflictResultList } from './_shared.js';
-import { findConflicts } from '../util/conflict.js';
+import { todayIso } from './_shared.js';
 
 const ERA_NAMES = ['令和', '平成', '昭和', '大正', '明治'];
 
 // ツールの一覧（表示順）。need はその端末で使える機能（PCのみ等）
 const TOOLS = [
-  { key: 'conflict', icon: '⚖️', title: 'コンフリクトチェック', desc: '相談者・関係者の名前等が、既存の顧客・相手方・相手方代理人と重ならないか確認（利益相反の確認）', build: buildConflictSection },
   { key: 'free', icon: '🕒', title: '空き日程の検索', desc: 'Googleカレンダーから空いている日時を探し、候補の文章を作って仮予定（TBD）として登録', need: 'gcalFree', build: buildFreeSection },
   { key: 'age', icon: '🎂', title: '年齢・学年・卒業年次', desc: '生年月日から満年齢、現在の学年、入学・卒業の年を表示', build: buildAgeSection },
   { key: 'days', icon: '📅', title: '日数計算', desc: '2つの日付の間の日数（初日算入・不算入、うるう日の指摘）', build: buildDaysSection },
@@ -45,29 +43,6 @@ export async function render(container, params, ctx) {
   container.appendChild(el('a', { href: '#/tools', class: 'btn btn-small tool-back' }, '← ツール一覧'));
   container.appendChild(el('h1', { class: 'view-title' }, tool.title));
   container.appendChild(await tool.build(ctx));
-}
-
-// ---------------- コンフリクトチェック（利益相反の確認。DESIGN.md §17） ----------------
-function buildConflictSection(ctx) {
-  const section = el('section', { class: 'section' });
-  section.appendChild(el('p', { class: 'text-muted' }, '相談を受ける前などに、相談者・相手方・関係者の名前（個人名・会社名・かな）、電話番号、メールアドレスを入れて、既存の顧客・各案件の相手方・相手方代理人と照合します。全角/半角・空白・カタカナ/ひらがな・「株式会社」等の違いは無視して比べます。'));
-  const names = el('textarea', { class: 'field', rows: 4, placeholder: '名前（1行に1人・1社。例: 山田 太郎／株式会社サンプル商事／やまだ たろう）', 'aria-label': '照合する名前' });
-  const phones = el('input', { type: 'text', class: 'field', placeholder: '電話番号（任意。複数はカンマ区切り）', 'aria-label': '照合する電話番号' });
-  const emails = el('input', { type: 'text', class: 'field', placeholder: 'メールアドレス（任意。複数はカンマ区切り）', 'aria-label': '照合するメールアドレス' });
-  const out = el('div', { 'aria-live': 'polite' });
-  const split = (s) => String(s || '').split(/[\n,、，]/).map((x) => x.trim()).filter(Boolean);
-  section.appendChild(el('label', {}, ['名前', names]));
-  section.appendChild(el('div', { class: 'field-row' }, [el('label', {}, ['電話番号', phones]), el('label', {}, ['メールアドレス', emails])]));
-  section.appendChild(el('div', { class: 'toolbar' }, [el('button', { type: 'button', class: 'btn btn-primary', onClick: async () => {
-    const query = { names: split(names.value), phones: split(phones.value), emails: split(emails.value) };
-    if (!query.names.length && !query.phones.length && !query.emails.length) { clear(out); out.appendChild(el('p', { class: 'text-error' }, '名前・電話番号・メールアドレスのどれかを入れてください')); return; }
-    const hits = findConflicts(query, await ctx.store.all());
-    clear(out);
-    out.appendChild(el('h3', {}, `照合結果（${new Date().toLocaleString('ja-JP')}）`));
-    out.appendChild(conflictResultList(hits));
-  } }, '照合する')]));
-  section.appendChild(out);
-  return section;
 }
 
 /** 'YYYY'年と月 → 「2019年4月（平成31年4月）」 */

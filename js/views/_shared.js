@@ -9,7 +9,7 @@ import { formatDate, formatDateTime, todayIso } from '../ui/dates.js';
 import { lookupZip, googleMapsUrl, addressSearchUrl } from '../util/zip.js';
 import { setupKanaAssist } from '../util/kana.js';
 import { ConflictError } from '../api.js';
-import { findConflicts, findClientConflictsForOpponent, clientParty, summarizeConflicts, CONFLICT_KIND_LABEL } from '../util/conflict.js';
+import { CONFLICT_KIND_LABEL } from '../util/conflict.js';
 
 export { deadlineBadge, displayName, kanaName, sortByKana, opponentName, defaultClient, defaultCase, defaultTodo, newId, PHONE_TYPES, todoCaseText, todoRequesterText, formatDate, formatDateTime, todayIso };
 
@@ -181,9 +181,9 @@ export function takeNewDraft(coll) {
   return d || null;
 }
 
-// ---------------- コンフリクトチェック（利益相反の確認。DESIGN.md §17） ----------------
+// ---------------- コンフリクトチェック（利益相反の確認。検索画面のオプション。DESIGN.md §17） ----------------
 
-/** 照合結果の一覧（ダイアログ・ツール画面で共用） */
+/** 照合結果の一覧（検索画面のコンフリクトチェックで使う） */
 export function conflictResultList(hits) {
   if (!hits.length) return el('p', {}, '✅ 該当はありませんでした（既存の顧客・相手方・相手方代理人と照合）。');
   return el('ul', { class: 'conflict-list' }, hits.map((h) => el('li', { class: ['conflict-item', h.level === 'strong' ? 'conflict-strong' : ''] }, [
@@ -196,56 +196,6 @@ export function conflictResultList(hits) {
     el('div', { class: 'text-muted' }, `理由: ${h.reasons.join('・')}`),
     h.href ? el('a', { href: h.href, target: '_blank', rel: 'noopener' }, '別の画面で開く') : null
   ])));
-}
-
-/** 照合結果を見せて、続けるかを聞く。該当がなければ聞かずに true */
-export function confirmConflicts(hits, { title, message, continueLabel }) {
-  if (!hits.length) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const strong = hits.some((h) => h.level === 'strong' && h.kind !== 'client');
-    const body = el('div', { class: 'field-stack' }, [
-      el('p', {}, message || (strong
-        ? '⚠ 利益相反の可能性があります。登録する前に、下の該当を確認してください。'
-        : '似た登録が見つかりました。同じ人・会社でないか確認してください。')),
-      conflictResultList(hits)
-    ]);
-    openDialog({
-      title: title || 'コンフリクトチェックの結果',
-      bodyNode: body,
-      actions: [
-        { label: 'やめる（登録しない）', onClick: () => resolve(false) },
-        { label: continueLabel || '確認のうえ登録する', danger: strong, primary: !strong, onClick: () => resolve(true) }
-      ],
-      onClose: () => resolve(false)
-    });
-  });
-}
-
-/**
- * 顧客を登録・保存する前のコンフリクトチェック。続けるなら記録用の項目 {conflictCheck} を、やめるなら null を返す。
- * 記録: いつ・結果の要約・件数・該当を確認のうえ登録したか
- */
-export async function checkClientBeforeSave(ctx, rec, { excludeClientId = '' } = {}) {
-  const data = await ctx.store.all();
-  const hits = findConflicts(clientParty(rec), data, { excludeClientId });
-  if (!(await confirmConflicts(hits, {}))) return null;
-  return { conflictCheck: { at: new Date().toISOString(), result: summarizeConflicts(hits), count: hits.length, acknowledged: hits.length > 0 } };
-}
-
-/** 案件の相手方を保存する前に、既存の顧客（依頼者側）と照合する。続けるなら true */
-export async function checkOpponentsBeforeSave(ctx, caseId, opponents, before = []) {
-  const changed = (opponents || []).filter((o) => {
-    const prev = before.find((p) => p.id && p.id === o.id);
-    return !prev || opponentName(prev) !== opponentName(o) || (prev.lawyerName || '') !== (o.lawyerName || '') || (prev.tel || '') !== (o.tel || '');
-  });
-  if (!changed.length) return true;
-  const data = await ctx.store.all();
-  const hits = changed.flatMap((o) => findClientConflictsForOpponent(o, data, { excludeCaseId: caseId }));
-  return confirmConflicts(hits, {
-    title: '相手方のコンフリクトチェック',
-    message: '入力した相手方が、既存の顧客や他の案件の相手方として登録されています。確認してください。',
-    continueLabel: '確認のうえ保存する'
-  });
 }
 
 export function quickCreateClientDialog(ctx) {
@@ -343,11 +293,8 @@ export function quickCreateClientDialog(ctx) {
               if (input) input.focus();
               return 'keep-open';
             }
-            // 登録の前にコンフリクトチェック（該当があれば結果を見せて、続けるか聞く）
-            const checked = await checkClientBeforeSave(ctx, rec);
-            if (!checked) return 'keep-open';
             try {
-              const created = await ctx.store.create('clients', { ...rec, ...checked });
+              const created = await ctx.store.create('clients', rec);
               ctx.toast('顧客を登録しました', 'success');
               resolve(created);
             } catch (e) {
