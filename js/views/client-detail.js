@@ -421,15 +421,16 @@ export async function render(container, params, ctx) {
           });
         }
         renderCp();
-        // 兼任チェック時は担当者欄を畳む（入力済みの担当者データは消さずに保持する）。
+        // 代表者が担当者を兼ねる場合も、ほかの担当者を追加できる（見出しだけ変える）
+        const cpTitle = el('label', {});
         const cpWrap = el('div', { class: 'field-stack' }, [
-          el('label', {}, ['担当者（代表者以外）']),
+          cpTitle,
           cpBox,
-          el('button', { type: 'button', class: 'btn btn-small', onClick: () => { contactPersons.push({ name: '', title: '', dept: '', tel: '', email: '', homeAddr: '' }); renderCp(); } }, '＋担当者追加')
+          el('button', { type: 'button', class: 'btn btn-small', onClick: () => { contactPersons.push({ name: '', title: '', dept: '', tel: '', email: '', homeAddr: '' }); renderCp(); } }, '＋担当者を追加')
         ]);
-        const syncCpWrap = () => { cpWrap.hidden = repIsContact.checked && contactPersons.length === 0; };
-        repIsContact.addEventListener('change', syncCpWrap);
-        syncCpWrap();
+        const syncCpTitle = () => { cpTitle.textContent = repIsContact.checked ? 'そのほかの担当者（代表者に加えて）' : '担当者（代表者以外）'; };
+        repIsContact.addEventListener('change', syncCpTitle);
+        syncCpTitle();
         form.appendChild(cpWrap);
 
         const branchOffices = (record.branchOffices || []).map((b) => ({ ...b }));

@@ -201,6 +201,7 @@ export function conflictResultList(hits) {
 export function quickCreateClientDialog(ctx) {
   return new Promise((resolve) => {
     let type = 'individual';
+    let otherOpen = false; // 兼任のときに「ほかの担当者」欄を開いたか
     const form = el('form', { class: 'quick-form' });
 
     const typeRow = el('div', { class: 'field-row' }, [
@@ -250,7 +251,10 @@ export function quickCreateClientDialog(ctx) {
         // 代表者1名で担当者も同じ場合は、担当者の電話・メールを別入力しない（会社の連絡先を共用）。
         const repIsContact = el('input', { type: 'checkbox', name: 'repIsContact', checked: true });
         fieldsBox.appendChild(el('label', { class: 'field-row' }, [repIsContact, '代表者が担当者を兼ねる']));
+        // 兼任のときも［＋ほかの担当者も入力する］で、代表者以外の担当者を追加できる
+        const cpTitle = el('div', { class: 'text-muted' });
         const cpBox = el('div', { class: 'field-stack' }, [
+          cpTitle,
           el('div', { class: 'field-row' }, [
             el('label', {}, ['担当者氏名', el('input', { type: 'text', name: 'cpName', class: 'field' })]),
             el('label', {}, ['担当者役職', el('input', { type: 'text', name: 'cpTitle', class: 'field' })])
@@ -260,11 +264,17 @@ export function quickCreateClientDialog(ctx) {
             el('label', {}, ['担当者メール', el('input', { type: 'email', name: 'cpEmail', class: 'field' })])
           ])
         ]);
-        const syncCp = () => { cpBox.hidden = repIsContact.checked; };
+        const addOther = el('button', { type: 'button', class: 'btn btn-small', onClick: () => { otherOpen = true; syncCp(); } }, '＋ほかの担当者も入力する');
+        const syncCp = () => {
+          cpBox.hidden = repIsContact.checked && !otherOpen;
+          addOther.hidden = !repIsContact.checked || otherOpen;
+          cpTitle.textContent = repIsContact.checked ? 'そのほかの担当者（代表者に加えて）' : '担当者（代表者以外）';
+        };
         repIsContact.addEventListener('change', syncCp);
         syncCp();
         fieldsBox.appendChild(el('label', {}, ['電話番号', el('input', { type: 'tel', name: 'phone', class: 'field' })]));
         fieldsBox.appendChild(el('label', {}, ['メール', el('input', { type: 'email', name: 'email', class: 'field' })]));
+        fieldsBox.appendChild(addOther);
         fieldsBox.appendChild(cpBox);
         return;
       }
@@ -322,7 +332,7 @@ export function quickCreateClientDialog(ctx) {
         rec.representative = data.get('representative') || '';
         rec.email = data.get('email') || '';
         rec.repIsContact = data.get('repIsContact') === 'on';
-        if (!rec.repIsContact) {
+        if (!rec.repIsContact || otherOpen) { // 兼任でも、ほかの担当者を入力していれば登録する
           const cp = {
             name: data.get('cpName') || '', title: data.get('cpTitle') || '', dept: '',
             tel: data.get('cpTel') || '', email: data.get('cpEmail') || '', homeAddr: ''
